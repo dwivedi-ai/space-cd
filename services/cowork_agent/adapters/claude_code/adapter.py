@@ -448,6 +448,10 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             native_resume_id = get_native_session_id(sk)
 
         mcp_config_path = write_session_mcp_config(user_id, sk)
+        # Read by the ``finally`` below, so set before anything can fail: a
+        # spawn error must surface as itself, not as an UnboundLocalError.
+        native_session_id: str | None = None
+        usage: dict = {}
         try:
             cmd = self._build_cmd(
                 question, native_resume_id, stream=True, agent_type=agent_type, cwd=effective_cwd,
@@ -465,10 +469,8 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 cwd=effective_cwd,
             )
 
-            native_session_id: str | None = None
             response_parts: list[str] = []
             result_text: str = ""
-            usage: dict = {}
             model_id = ""
             # With --include-partial-messages the CLI streams a block as
             # deltas (text) or a block start (thinking, tool use) and THEN
