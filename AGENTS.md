@@ -28,7 +28,8 @@
 - Every call to Levanto Sage goes through `services/levanto/client.py` (the only reader of
   `LEVANTO_API_KEY`); `tests/test_levanto_client.py` enforces it. Decision-model routing is
   switched by `XO_INTELLIGENCE_MODE` (default `off`, no network) and lives in
-  `services/cowork_agent/intelligence/`.
+  `services/cowork_agent/intelligence/`; `scripts/intelligence_report.py` reads its logs
+  back (one row per session, decision joined to outcome).
 - Project sharing (`services/cowork_agent/project_sharing/`, internally "the relay") is core, agent-free code:
   `config.py` is its only env reader, `service.py` its only router-facing surface,
   and per-repo bookmarks live under `~/.quirq/sharing/`, never in a project's `.xo/`.
