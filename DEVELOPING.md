@@ -156,6 +156,7 @@ Capabilities in use today:
 | `streaming` | SSE shaping | ✓ | ✓ | ✓ | no |
 | `visualizer_source` | visualizer feed | ✓ | ✓ | ✓ | ✓ |
 | `routes` | agent-owned `APIRouter` (active-only) | ✓ | no | ✓ | ✓ |
+| `oneshot` | a one-off, tool-free completion (drafting a project's category list) | no | ✓ | no | no |
 
 `claude_code` has no `chat` capability on purpose: `routers/cowork_agent/chat.py`
 falls through to the shared `AgentDispatcher` when `chat`/`handle_prompt` is
@@ -501,6 +502,7 @@ The gates (authoritative values live in `install.sh` for local and the coder
 | `PROJECT_SHARING_ENABLED` / `PROJECT_SHARING_POLL_INTERVAL_SECONDS` | commit relay brake / cadence (flat, default 60s) | defaults | defaults | `services/cowork_agent/project_sharing/config.py` |
 | `XO_INTELLIGENCE_MODE` / `XO_INTELLIGENCE_TIMEOUT_S` / `LEVANTO_API_KEY` | Levanto Sage picks each new chat session's profile from `config/agents/<name>/intelligence.json`: `off` (default, no network), `shadow` (decide and log to `<state>/projects/<pid>/intelligence/`, apply nothing), `on` | unset → `off` | unset → `off` | `services/cowork_agent/intelligence/mode.py`; the key only in `services/levanto/client.py` |
 | `XO_INTELLIGENCE_CONTEXT` | per-turn context handed to the agent beside the user's message (claude_code: a `UserPromptSubmit` hook's `additionalContext`, passed with `--settings`): `off` (default) or `note` (a fixed test note) | unset → `off` | unset → `off` | `services/cowork_agent/intelligence/mode.py` |
+| `XO_CONTEXT_MIN_FILES` | the fewest tracked code files a git repo needs before it gets a category list for "where to look" (`scripts/intelligence_index.py draft <project>`) | unset → 150 | unset → 150 | `services/cowork_agent/intelligence/categories.py` |
 | `QUIRQ_PUBLIC_URL` | externally reachable base URL | unset | `http://localhost:${PORT}` | `runtime_config.py` |
 | `STARTUP_WARMUP_URL` | self-warmup target after boot | `http://localhost:${PORT}` | `http://127.0.0.1:${PORT}` | `server.py` |
 
