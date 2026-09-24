@@ -47,6 +47,14 @@ def _extract_native_session_id(event: dict) -> str | None:
     return None
 
 
+def _flag_value(flag: str, value: str) -> str:
+    """A value for ``--model`` / ``--effort``. Already checked against the
+    agent's profiles; checked again here so no value can become a flag."""
+    if not value or value.startswith("-") or any(ch.isspace() for ch in value):
+        raise ValueError(f"refusing {flag} value {value!r}")
+    return value
+
+
 def make_session_key(agent_id: str) -> str:
     return f"claude:{agent_id}:web:{uuid.uuid4().hex[:8]}"
 
@@ -195,6 +203,8 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         cwd: str | None = None,
         mcp_config_path: "Path | None" = None,
         new_session_id: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
     ) -> list[str]:
         cli = self.config.get("cli_path") or "claude"
         workspace = cwd or str(xo_projects_root())
@@ -221,6 +231,12 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             cmd += ["--verbose", "--include-partial-messages"]
         if mcp_config_path is not None:
             cmd += ["--mcp-config", str(mcp_config_path)]
+        # The turn's intelligence profile (config/agents/claude_code/intelligence.json).
+        # Neither flag is passed unless chosen, so Claude Code's own settings decide.
+        if model:
+            cmd += ["--model", _flag_value("--model", model)]
+        if effort:
+            cmd += ["--effort", _flag_value("--effort", effort)]
         # --resume and --session-id are mutually exclusive at the CLI.
         if native_session_id:
             cmd += ["--resume", native_session_id]
@@ -336,12 +352,15 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
 
         agent_id = kwargs.get("agent_id")
         user_id = kwargs.get("user_id")
+        intelligence = kwargs.get("intelligence") or {}
         cwd = self._resolve_cwd(agent_id)
         mcp_config_path = write_session_mcp_config(user_id, kwargs.get("session_key"))
         try:
             cmd = self._build_cmd(
                 question, session_id, stream=False, agent_type=agent_type, cwd=cwd,
                 mcp_config_path=mcp_config_path,
+                model=intelligence.get("model"),
+                effort=intelligence.get("effort"),
             )
             timeout = self.config.get("timeout", 300)
 
@@ -392,6 +411,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         is_new: bool = kwargs.get("is_new_session", session_id is None)
         agent_id: str | None = kwargs.get("agent_id")
         user_id: str | None = kwargs.get("user_id")
+        intelligence: dict = kwargs.get("intelligence") or {}
 
         # Resolve session_key: generate for new sessions, look up for existing ones.
         sk: str | None = kwargs.get("session_key")
@@ -433,6 +453,8 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 question, native_resume_id, stream=True, agent_type=agent_type, cwd=effective_cwd,
                 mcp_config_path=mcp_config_path,
                 new_session_id=pre_allocated_native_sid,
+                model=intelligence.get("model"),
+                effort=intelligence.get("effort"),
             )
 
             proc = await asyncio.create_subprocess_exec(
