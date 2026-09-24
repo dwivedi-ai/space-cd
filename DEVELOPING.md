@@ -503,6 +503,7 @@ The gates (authoritative values live in `install.sh` for local and the coder
 | `XO_INTELLIGENCE_MODE` / `XO_INTELLIGENCE_TIMEOUT_S` / `LEVANTO_API_KEY` | Levanto Sage picks each new chat session's profile from `config/agents/<name>/intelligence.json`: `off` (default, no network), `shadow` (decide and log to `<state>/projects/<pid>/intelligence/`, apply nothing), `on` | unset → `off` | unset → `off` | `services/cowork_agent/intelligence/mode.py`; the key only in `services/levanto/client.py` |
 | `XO_INTELLIGENCE_CONTEXT` | per-turn context handed to the agent beside the user's message (claude_code: a `UserPromptSubmit` hook's `additionalContext`, passed with `--settings`): `off` (default) or `note` (a fixed test note) | unset → `off` | unset → `off` | `services/cowork_agent/intelligence/mode.py` |
 | `XO_CONTEXT_MIN_FILES` | the fewest tracked code files a git repo needs before it gets a category list for "where to look" (`scripts/intelligence_index.py draft <project>`) | unset → 150 | unset → 150 | `services/cowork_agent/intelligence/categories.py` |
+| `XO_CONTEXT_INDEX_MAX_FILES` | the most files per project the file map tags (1 Levanto unit each; `scripts/intelligence_index.py index <project> [--limit N]`) | unset → 2000 | unset → 2000 | `services/cowork_agent/intelligence/file_map.py` |
 | `QUIRQ_PUBLIC_URL` | externally reachable base URL | unset | `http://localhost:${PORT}` | `runtime_config.py` |
 | `STARTUP_WARMUP_URL` | self-warmup target after boot | `http://localhost:${PORT}` | `http://127.0.0.1:${PORT}` | `server.py` |
 
