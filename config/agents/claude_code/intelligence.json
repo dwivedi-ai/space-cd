@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "default": {"model": null, "effort": null},
+  "efforts": ["low", "medium", "high", "xhigh", "max"],
+  "profiles": [
+    {"id": "light", "model": null, "effort": "low",
+     "use_when": "questions, explanations, small lookups; no code changes"},
+    {"id": "standard", "model": null, "effort": "medium",
+     "use_when": "small, well-defined code changes in one area"},
+    {"id": "deep", "model": null, "effort": "high",
+     "use_when": "features, debugging or refactors across several parts of the codebase"},
+    {"id": "research", "model": null, "effort": "medium",
+     "use_when": "needs outside information: docs, web, comparisons; little or no code"}
+  ]
+}
