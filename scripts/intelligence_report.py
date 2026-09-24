@@ -25,7 +25,7 @@ from services.cowork_agent.intelligence import report  # noqa: E402
 COLUMNS = [
     ("started", 20), ("project", 14), ("sage_chosen", 11), ("sage_probability", 5),
     ("reason", 13), ("applied", 12), ("turn_lines", 5), ("agent_turns", 6),
-    ("cost_usd", 8), ("duration_ms", 9), ("files_edited", 5), ("tags", 30),
+    ("cost_usd", 8), ("duration_ms", 9), ("files_edited", 5), ("label", 6), ("tags", 30),
 ]
 
 

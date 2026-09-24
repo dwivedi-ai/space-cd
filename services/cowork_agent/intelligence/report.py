@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from services.cowork_agent.engine import sessions_io
-from services.cowork_agent.intelligence import decision_log
+from services.cowork_agent.intelligence import decision_log, labels, profiles
 from services.storage.layout import projects_dir, sessions_dir
 
 
@@ -68,8 +68,20 @@ def _sum(values: Iterable[Any]) -> float | None:
     return round(sum(numbers), 6) if numbers else None
 
 
+def _effort_rank(runtime: str | None):
+    """A function ranking an effort level by the agent's ``efforts`` order."""
+    config = profiles.load(runtime or "")
+    efforts = list(config.efforts) if config else []
+    top = max((efforts.index(p.effort) for p in config.profiles if p.effort in efforts), default=None) if config else None
+
+    def rank(effort: str | None) -> int | None:
+        return efforts.index(effort) if effort in efforts else None
+    return rank, top
+
+
 def session_rows(since: str | None = None) -> list[dict[str, Any]]:
-    """One row per session with a decision or a turn line, oldest first."""
+    """One row per session with a decision or a turn line, oldest first,
+    each labelled right-sized, under- or over-powered (``labels.py``)."""
     rows: list[dict[str, Any]] = []
     for path in log_files():
         files = _files_edited(path)
@@ -88,6 +100,16 @@ def session_rows(since: str | None = None) -> list[dict[str, Any]]:
             choice = sage.get("choice") or {}
             outcomes = [t.get("outcome") or {} for t in turns]
             tokens = [o.get("tokens") or {} for o in outcomes]
+            applied = (decision or turns[0]).get("applied") or {}
+            rank, top = _effort_rank(first.get("runtime"))
+            first_rank = rank(applied.get("effort"))
+            later_request_ranks = [
+                rank((t.get("applied") or {}).get("effort")) for t in turns
+                if (t.get("applied") or {}).get("source") == "request" and not t.get("new_session")]
+            raised = first_rank is not None and any(r is not None and r > first_rank for r in later_request_ranks)
+            # The default passes no flags: today's own setup, the strongest one.
+            no_flags = not applied.get("model") and not applied.get("effort")
+            top_tier = no_flags or (top is not None and first_rank is not None and first_rank >= top)
             rows.append({
                 "session_id": session_id,
                 "project": first.get("project_id"),
@@ -100,7 +122,7 @@ def session_rows(since: str | None = None) -> list[dict[str, Any]]:
                 "tags": {k: v.get("applies") for k, v in (sage.get("tags") or {}).items() if isinstance(v, dict)},
                 "sage_units": sage.get("units"),
                 "sage_errors": [e.get("kind") for e in sage.get("errors") or []],
-                "applied": (decision or turns[0]).get("applied"),
+                "applied": applied,
                 "turn_lines": len(turns),
                 "agent_turns": _sum(o.get("turns") for o in outcomes),
                 "cost_usd": _sum(o.get("cost_usd") for o in outcomes),
@@ -110,8 +132,11 @@ def session_rows(since: str | None = None) -> list[dict[str, Any]]:
                 "tokens_cache_read": _sum(t.get("cache_read") for t in tokens),
                 "failed_turns": sum(1 for t, o in zip(turns, outcomes) if t.get("agent_error") or o.get("is_error")),
                 "files_edited": files.get(session_id),
+                "top_tier": top_tier,
+                "raised_by_request": raised,
             })
     rows.sort(key=lambda r: r["started"] or "")
+    labels.apply(rows)
     return rows
 
 
@@ -134,6 +159,8 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "decided_profiles": dict(Counter(r["decided_profile"] or "(default)" for r in decided)),
         "sage_units": _sum(r["sage_units"] for r in decided),
         "by_decided_profile": per_profile,
+        "labels_by_setup": labels.counts(rows),
+        "label_thresholds": labels.thresholds(rows),
     }
 
 
