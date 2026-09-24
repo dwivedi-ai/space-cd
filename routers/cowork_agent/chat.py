@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from services.cowork_agent.adapters.loader import try_load_capability
 from services.cowork_agent.engine.chat_state import active_streams
+from services.cowork_agent.intelligence import decisions as intelligence_decisions
 from services.cowork_agent.intelligence import selection as intelligence
 from services.xo_manifest import resolve_agent_name
 
@@ -295,6 +296,11 @@ async def chat_prompt(request: Request):
     # Default: route through AgentDispatcher.
     our_session_id = str(uuid.uuid4()) if is_new_session else session_id
     stream_id = str(uuid.uuid4())
+    # Decide a new session's profile once, in the background (XO_INTELLIGENCE_MODE).
+    intelligence_decision = intelligence_decisions.start(
+        agent_name=agent_name, text=text, session_id=our_session_id,
+        project=agent_id, request=intelligence_request,
+    ) if is_new_session else None
     active_streams[stream_id] = {
         "question": text,
         "session_id": our_session_id,
@@ -306,6 +312,7 @@ async def chat_prompt(request: Request):
         "is_new_session": is_new_session,
         "user_id": await _resolve_user_id(request),
         "intelligence_request": intelligence_request,
+        "intelligence_decision": intelligence_decision,
     }
     return {"stream_id": stream_id, "session_id": our_session_id}
 

@@ -499,6 +499,7 @@ The gates (authoritative values live in `install.sh` for local and the coder
 | `QUIRQ_WATCHER_SOURCE_MODE` | visualizer telemetry ingest source | default `active` | `all` | `services/cowork_agent/visualizer/watcher.py` |
 | `XO_SPACE_ID` | this workspace's id at the swarm; the commit relay parks without it and every Composio route 401s | set by the template (pending) | unset unless the user sets it | `services/cowork_agent/project_sharing/config.py`, `services/cowork_agent/connectors/composio/state.py` |
 | `PROJECT_SHARING_ENABLED` / `PROJECT_SHARING_POLL_INTERVAL_SECONDS` | commit relay brake / cadence (flat, default 60s) | defaults | defaults | `services/cowork_agent/project_sharing/config.py` |
+| `XO_INTELLIGENCE_MODE` / `XO_INTELLIGENCE_TIMEOUT_S` / `LEVANTO_API_KEY` | Levanto Sage picks each new chat session's profile from `config/agents/<name>/intelligence.json`: `off` (default, no network), `shadow` (decide and log to `<state>/projects/<pid>/intelligence/`, apply nothing), `on` | unset → `off` | unset → `off` | `services/cowork_agent/intelligence/mode.py`; the key only in `services/levanto/client.py` |
 | `QUIRQ_PUBLIC_URL` | externally reachable base URL | unset | `http://localhost:${PORT}` | `runtime_config.py` |
 | `STARTUP_WARMUP_URL` | self-warmup target after boot | `http://localhost:${PORT}` | `http://127.0.0.1:${PORT}` | `server.py` |
 
