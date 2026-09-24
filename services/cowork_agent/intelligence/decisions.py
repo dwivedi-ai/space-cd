@@ -205,6 +205,13 @@ def _setup_from_log(session_id: str) -> dict[str, Any] | None:
     return applied if isinstance(applied, dict) else None
 
 
+def remembered(session_id: str | None) -> dict[str, Any] | None:
+    """The setup remembered for a session, including one that passes no flags
+    (the default), or ``None``. No I/O."""
+    applied = _session_setups.get(session_id) if session_id else None
+    return applied or None
+
+
 async def session_setup(session_id: str | None) -> dict[str, Any] | None:
     """The setup a session started with, or ``None`` if it started with none.
 

@@ -40,8 +40,11 @@ def after_turn(
         if current == mode.OFF or profiles.load(agent_name) is None:
             return None
         outcome = (done_event or {}).get("outcome")
+        # A setup that passes no flags (the default) reaches the adapter as
+        # nothing; the session's remembered setup still says what it was.
+        applied = applied or decisions.remembered(stream_info.get("our_session_id")) or dict(_NOTHING_APPLIED)
         task = asyncio.get_running_loop().create_task(asyncio.to_thread(
-            _record, stream_info, current, applied or dict(_NOTHING_APPLIED),
+            _record, stream_info, current, applied,
             outcome if isinstance(outcome, dict) else None, agent_error,
         ))
     except Exception:  # noqa: BLE001 - recording a turn must never cost a reply

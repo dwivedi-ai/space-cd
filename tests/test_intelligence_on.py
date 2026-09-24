@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from services.cowork_agent.engine import sessions_io
-from services.cowork_agent.intelligence import classify, decisions, mode, profiles, selection
+from services.cowork_agent.intelligence import classify, decisions, mode, outcomes, profiles, selection
 
 CONFIG = profiles.parse({
     "schema": 1,
@@ -160,8 +160,16 @@ class FirstTurnTests(_Sandbox):
     def test_a_default_with_no_flags_passes_nothing(self) -> None:
         with patch.object(profiles, "load", return_value=NO_FLAG_DEFAULT):
             kwargs, line = self.first_turn(answer(None, classify.SAGE_UNSURE))
-        self.assertIsNone(kwargs)
-        self.assertEqual(line["applied"]["source"], "default")
+            self.assertIsNone(kwargs)
+            self.assertEqual(line["applied"]["source"], "default")
+            # ...and the turn line says so too, though the adapter got nothing.
+            async def record():
+                await outcomes.after_turn({"agent_name": "sample_agent", "our_session_id": "s1",
+                                           "is_new_session": True, "agent_id": None},
+                                          kwargs, {"done": True, "outcome": None}, agent_error=False)
+            asyncio.run(record())
+        turn = json.loads((self.state / "sessions" / "intelligence" / "decisions.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((turn["type"], turn["applied"]["source"]), ("intelligence.turn", "default"))
 
 
 class ResumedTurnTests(_Sandbox):
