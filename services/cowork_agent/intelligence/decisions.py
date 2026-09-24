@@ -122,14 +122,18 @@ async def _decide(
     started = time.perf_counter()
     try:
         content = classify.prepare_content(text)
-        deciding = asyncio.ensure_future(classify.classify(config, content, timeout=mode.sage_timeout_s()))
+        choice_ready = asyncio.get_running_loop().create_future()
+        deciding = asyncio.ensure_future(classify.classify(
+            config, content, timeout=mode.sage_timeout_s(), choice_ready=choice_ready))
+        # If deciding fails before the choice answer, stop waiting at once.
+        deciding.add_done_callback(lambda _task: _resolve(choice_ready, None))
         on_time = True
         if current_mode == mode.ON:
+            # Wait for the choice only: the tags call is for the log and may be slower.
             try:
-                await asyncio.wait_for(asyncio.shield(deciding), timeout=ON_WAIT_S)
+                picked = await asyncio.wait_for(asyncio.shield(choice_ready), timeout=ON_WAIT_S)
             except asyncio.TimeoutError:
-                on_time = False
-            picked = deciding.result().profile if on_time else None
+                picked, on_time = None, False
             applied = selection.select(config, request, decided=picked, use_default=True)
         else:
             applied = selection.select(config, request)

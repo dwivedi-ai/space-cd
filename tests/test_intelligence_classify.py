@@ -140,6 +140,31 @@ class DecisionTests(_Classify):
         decision = self.run_with(choice_answer("deep", units_tokens=9000))
         self.assertEqual(decision.sage["units"], 3 + 1)
 
+    def test_the_choice_is_announced_before_the_tags_arrive(self) -> None:
+        order: list[str] = []
+
+        async def fake_decide(content, question, *, timeout):
+            if question["kind"] == "tags":
+                await asyncio.sleep(0.05)
+                order.append("tags")
+                return tags_answer()
+            order.append("choice")
+            return choice_answer("deep")
+
+        async def go():
+            ready = asyncio.get_running_loop().create_future()
+            ready.add_done_callback(lambda f: order.append(f"ready:{f.result()}"))
+            await classify.classify(CONFIG, "x", timeout=5, choice_ready=ready)
+
+        with patch.object(classify.client, "decide", fake_decide):
+            asyncio.run(go())
+        self.assertEqual(order, ["choice", "ready:deep", "tags"])
+
+    def test_unknown_or_a_failure_announces_no_profile(self) -> None:
+        for result in (choice_answer("unknown"), choice_answer(None), failure(402, "balance")):
+            with self.subTest(result=result.data or result.status):
+                self.assertIsNone(classify._picked(CONFIG, result))
+
     def test_each_failure_kind_warns_once(self) -> None:
         with self.assertLogs(classify.log, "WARNING") as logs:
             for _ in range(3):

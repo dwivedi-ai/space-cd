@@ -63,13 +63,18 @@ class _Sandbox(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def sage(self, decision: classify.Decision, delay: float = 0.0):
-        async def fake(config, content, *, timeout):
+    def sage(self, decision: classify.Decision, delay: float = 0.0, tags_delay: float = 0.0):
+        """Sage answers the choice after ``delay`` and the tags ``tags_delay`` later."""
+        async def fake(config, content, *, timeout, choice_ready=None):
             await asyncio.sleep(delay)
+            if choice_ready is not None and not choice_ready.done():
+                choice_ready.set_result(decision.profile)
+            await asyncio.sleep(tags_delay)
             return decision
         return patch.object(decisions.classify, "classify", fake)
 
-    def first_turn(self, decision, *, delay=0.0, request=None, session_id="s1") -> tuple[dict | None, dict]:
+    def first_turn(self, decision, *, delay=0.0, tags_delay=0.0, request=None,
+                   session_id="s1") -> tuple[dict | None, dict]:
         """Run a new session's first turn; return its adapter keyword and its log line."""
         async def go():
             pending = decisions.start(agent_name="sample_agent", text="fix it", session_id=session_id,
@@ -80,7 +85,7 @@ class _Sandbox(unittest.TestCase):
             })
             await pending.task
             return kwargs
-        with self.sage(decision, delay):
+        with self.sage(decision, delay, tags_delay):
             kwargs = asyncio.run(go())
         lines = (self.state / "sessions" / "intelligence" / "decisions.jsonl").read_text().splitlines()
         return kwargs, json.loads(lines[-1])
@@ -128,6 +133,12 @@ class FirstTurnTests(_Sandbox):
                                             "model": "claude-opus-5-5", "effort": "high"})
         self.assertEqual(line["applied"], kwargs)
 
+    def test_a_quick_choice_is_applied_while_slow_tags_finish(self) -> None:
+        # Live 16:09: the choice came in 0.64 s, the tags in 3.7 s. The pick counts.
+        kwargs, line = self.first_turn(answer("deep"), tags_delay=0.5)
+        self.assertEqual(kwargs["source"], "sage")
+        self.assertEqual(line["decision"]["reason"], "sage_choice")
+
     def test_no_decision_means_the_default(self) -> None:
         for decision in (answer(None, classify.SAGE_UNSURE), answer(None, classify.SAGE_UNKNOWN),
                          answer(None, classify.SAGE_ERROR)):
@@ -141,7 +152,7 @@ class FirstTurnTests(_Sandbox):
         self.assertEqual(kwargs, {"profile": "deep", "model": "claude-opus-5-5", "effort": "low", "source": "sage"})
 
     def test_a_failed_decision_still_answers_the_turn(self) -> None:
-        async def broken(config, content, *, timeout):
+        async def broken(config, content, *, timeout, choice_ready=None):
             raise RuntimeError("boom")
 
         async def go():

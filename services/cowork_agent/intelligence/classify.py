@@ -161,10 +161,37 @@ def _read_tags(result: client.SageResult) -> tuple[dict | None, dict | None]:
     return record, None
 
 
-async def classify(config: profiles.IntelligenceConfig, content: str, *, timeout: float) -> Decision:
-    """Ask both questions at once. Never raises."""
+def _picked(config: profiles.IntelligenceConfig, result: client.SageResult) -> str | None:
+    """The profile a choice answer picked, or ``None`` (unknown, unsure, failed)."""
+    if not result.ok:
+        return None
+    answer = result.data.get("result")
+    chosen = answer.get("chosen") if isinstance(answer, dict) else None
+    return chosen if chosen in config.profile_ids else None
+
+
+async def classify(
+    config: profiles.IntelligenceConfig,
+    content: str,
+    *,
+    timeout: float,
+    choice_ready: asyncio.Future | None = None,
+) -> Decision:
+    """Ask both questions at once. Never raises.
+
+    ``choice_ready``, when given, is resolved with the picked profile (or
+    ``None``) as soon as the choice answer arrives: only the choice decides the
+    setup, so a caller on a deadline need not wait for the tags, which are
+    for the log.
+    """
+    async def ask_choice() -> client.SageResult:
+        result = await client.decide(content, choice_question(config), timeout=timeout)
+        if choice_ready is not None and not choice_ready.done():
+            choice_ready.set_result(_picked(config, result))
+        return result
+
     choice_result, tags_result = await asyncio.gather(
-        client.decide(content, choice_question(config), timeout=timeout),
+        ask_choice(),
         client.decide(content, tags_question(), timeout=timeout),
     )
     option_ids = set(config.profile_ids) | {profiles.UNKNOWN}
