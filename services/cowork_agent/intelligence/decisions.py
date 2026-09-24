@@ -171,10 +171,35 @@ def _session_project(session_id: str) -> tuple[bool, str | None]:
     return False, None
 
 
+# session_id -> its project (None: no project). Filled from worker threads.
+_session_projects: dict[str, str | None] = {}
+
+
+def session_project(session_id: str | None, hint: str | None, *, new_session: bool) -> str | None:
+    """The project a session's log lines belong in. Blocking I/O on a miss.
+
+    A new session's is the request's (``hint``, ``None`` for no project). A
+    resumed turn's request usually names none, so it is looked up in the
+    session indexes once and remembered.
+    """
+    if new_session or hint or not session_id:
+        project = hint or None
+    elif session_id in _session_projects:
+        return _session_projects[session_id]
+    else:
+        _found, project = _session_project(session_id)
+    if session_id:
+        if len(_session_projects) >= _SESSION_SETUPS_MAX:
+            _session_projects.clear()
+        _session_projects[session_id] = project
+    return project
+
+
 def _setup_from_log(session_id: str) -> dict[str, Any] | None:
     found, project = _session_project(session_id)
     if not found:
         return None
+    _session_projects[session_id] = project
     line = decision_log.find(project, session_id)
     applied = line.get("applied") if line else None
     return applied if isinstance(applied, dict) else None

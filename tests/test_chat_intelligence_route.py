@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from routers.cowork_agent import chat
 from services.cowork_agent.engine import dispatcher as dispatcher_mod
 from services.cowork_agent.engine.chat_state import active_streams
-from services.cowork_agent.intelligence import profiles, selection
+from services.cowork_agent.intelligence import decisions, profiles, selection
 
 
 class _Route(unittest.TestCase):
@@ -76,6 +76,8 @@ class _FakeDispatcher:
 class StreamTests(unittest.TestCase):
     def setUp(self) -> None:
         _FakeDispatcher.calls = []
+        decisions._session_setups.clear()
+        self.addCleanup(decisions._session_setups.clear)
         patcher = patch.object(dispatcher_mod, "AgentDispatcher", _FakeDispatcher)
         patcher.start()
         self.addCleanup(patcher.stop)

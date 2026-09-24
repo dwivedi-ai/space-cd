@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from services.cowork_agent.adapters.loader import try_load_capability
 from services.cowork_agent.engine.chat_state import active_streams
 from services.cowork_agent.intelligence import decisions as intelligence_decisions
+from services.cowork_agent.intelligence import outcomes as intelligence_outcomes
 from services.cowork_agent.intelligence import selection as intelligence
 from services.xo_manifest import resolve_agent_name
 
@@ -148,6 +149,8 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
 
     dispatcher = AgentDispatcher(agent_name)
     final_native_session_id = None
+    final_event = None
+    agent_error = False
     queue: asyncio.Queue = asyncio.Queue()
     # Model/effort for this turn, only for agents that ship intelligence
     # profiles and only when the turn sets something; otherwise nothing is passed.
@@ -188,6 +191,7 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
             event = item
             if event.get("done"):
                 final_native_session_id = event.get("native_session_id")
+                final_event = event
                 break
             elif event.get("type") == "token":
                 yield f"id: {event_id}\nevent: text-delta\ndata: {json.dumps({'text': event.get('token', '')})}\n\n"
@@ -201,10 +205,14 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
                 yield f"id: {event_id}\nevent: model-loading\ndata: {json.dumps({'label': event.get('label', '')})}\n\n"
                 event_id += 1
             elif event.get("type") == "error":
+                agent_error = True
                 yield f"id: {event_id}\nevent: agent-error\ndata: {json.dumps({'error_message': event.get('error', 'Stream error')})}\n\n"
                 event_id += 1
     finally:
         producer.cancel()
+
+    # What the turn ran with and cost, logged in the background (shadow / on only).
+    intelligence_outcomes.after_turn(stream_info, selection, final_event, agent_error=agent_error)
 
     resolved_session_id = our_session_id or final_native_session_id
     if _session_id_out is not None:

@@ -1,11 +1,13 @@
-"""The decision log: one JSON line per new session, machine-local.
+"""The decision log: one JSON line per new session, then one per turn, machine-local.
 
 - a project's chats: ``~/.quirq/projects/<key>/intelligence/decisions.jsonl``
 - chats with no project: ``~/.quirq/sessions/intelligence/decisions.jsonl``
 
 Never in the project folder and never synced. A line records what was asked
 (a short preview and a hash, not the whole text), what Sage answered, the
-profile that would be chosen and why, and what the session actually ran with.
+profile that would be chosen and why, and what the session actually ran with
+(``intelligence.decision``). Every finished turn then adds what it ran with and
+what it cost: turns, time, tokens, cost (``intelligence.turn``).
 ``session_id`` is XO's session id; the session index maps it to the agent's
 own id, which is how outcomes are joined to decisions later.
 
@@ -29,6 +31,7 @@ from services.timestamps import now_iso
 log = logging.getLogger(__name__)
 
 TYPE = "intelligence.decision"
+TURN_TYPE = "intelligence.turn"
 SCHEMA = 1
 SUBDIR = "intelligence"
 FILENAME = "decisions.jsonl"
@@ -132,21 +135,60 @@ def build_line(
     return line
 
 
+def turn_line(
+    *,
+    identity: dict[str, str],
+    session_id: str | None,
+    runtime: str,
+    mode: str,
+    new_session: bool,
+    applied: dict[str, Any],
+    outcome: dict[str, Any] | None,
+    agent_error: bool,
+) -> dict[str, Any]:
+    """One finished turn: the setup it ran with and what it cost.
+
+    ``outcome`` is the adapter's (see ``BaseAgentAdapter.stream``), ``None``
+    when the agent reported none (it crashed, or the turn was cut short).
+    """
+    line: dict[str, Any] = {"ts": now_iso(), "type": TURN_TYPE, "schema": SCHEMA, **identity}
+    line.update({
+        "session_id": session_id,
+        "runtime": runtime,
+        "mode": mode,
+        "new_session": new_session,
+        "applied": applied,
+        "outcome": outcome,
+        "agent_error": agent_error,
+    })
+    return line
+
+
+def _append(project: str | None, session_id: str | None, make_line) -> Path | None:
+    """Resolve the file, build the line with its identity, append. Never raises."""
+    try:
+        target = log_path(project)
+        if target is None:
+            return None
+        path, identity = target
+        line = make_line(identity)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        append_jsonl(path, [line])
+        return path
+    except Exception:  # noqa: BLE001 - a lost log line must never cost a reply
+        log.exception("intelligence: could not write to the decision log for session %s", session_id)
+        return None
+
+
 def record(project: str | None, **fields: Any) -> Path | None:
     """Write one session's decision. Returns the file written, or ``None``.
 
     ``fields`` are :func:`build_line`'s, less ``identity``, which comes from
     the project. Blocking file I/O: call it from a worker thread.
     """
-    try:
-        target = log_path(project)
-        if target is None:
-            return None
-        path, identity = target
-        line = build_line(identity=identity, **fields)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        append_jsonl(path, [line])
-        return path
-    except Exception:  # noqa: BLE001 - a lost log line must never cost a reply
-        log.exception("intelligence: could not write the decision for session %s", fields.get("session_id"))
-        return None
+    return _append(project, fields.get("session_id"), lambda identity: build_line(identity=identity, **fields))
+
+
+def record_turn(project: str | None, **fields: Any) -> Path | None:
+    """Write one finished turn (:func:`turn_line`'s fields). Blocking file I/O."""
+    return _append(project, fields.get("session_id"), lambda identity: turn_line(identity=identity, **fields))

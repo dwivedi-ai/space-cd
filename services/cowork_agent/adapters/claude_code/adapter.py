@@ -452,6 +452,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         # spawn error must surface as itself, not as an UnboundLocalError.
         native_session_id: str | None = None
         usage: dict = {}
+        outcome: dict | None = None  # what the turn cost and did, from the result event
         try:
             cmd = self._build_cmd(
                 question, native_resume_id, stream=True, agent_type=agent_type, cwd=effective_cwd,
@@ -504,11 +505,14 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                     if sid:
                         _patch_native_session_id(sk or "", sid)
                     usage = event.get("usage") or {}
+                    outcome = event.get("outcome")
                     model_id = event.get("model", "")
                     result_text = (event.get("result") or "").strip()
                     continue
 
                 kind = event.get("type")
+                if kind == "error" and event.get("outcome"):
+                    outcome = event.pop("outcome")
                 if kind in saw_partial:
                     if event.get("partial"):
                         saw_partial[kind] = True
@@ -551,7 +555,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                     _write_agent_row(agent_id_for_key, sk, meta)
                 _native_map[sk] = native_session_id
 
-        yield {"done": True, "native_session_id": native_session_id}
+        yield {"done": True, "native_session_id": native_session_id, "outcome": outcome}
 
     async def health(self) -> dict[str, Any]:
         cli = self.config.get("cli_path") or "claude"

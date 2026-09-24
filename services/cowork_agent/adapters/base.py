@@ -49,6 +49,9 @@ class BaseAgentAdapter(ABC):
         Streaming execution.
         Must yield dicts of shape { "type": "token", "token": str }
         and end with exactly one { "done": True, "native_session_id": str | None }.
+        The done event may carry "outcome": what the turn cost and did
+        (turns, duration_ms, api_duration_ms, cost_usd, is_error, stop,
+        models, tokens), recorded by the intelligence outcome log.
         """
 
     # ── Concrete (override when needed) ───────────────────────────────────────

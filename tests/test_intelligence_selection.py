@@ -108,9 +108,15 @@ class SelectTests(unittest.TestCase):
 
 
 class TurnSelectionTests(_WithConfig):
+    def setUp(self) -> None:
+        super().setUp()
+        decisions._session_setups.clear()
+        self.addCleanup(decisions._session_setups.clear)
+
     def turn(self, request):
         return asyncio.run(decisions.turn_selection(
-            {"agent_name": "sample_agent", "our_session_id": "s1", "intelligence_request": request}
+            {"agent_name": "sample_agent", "our_session_id": "s1", "is_new_session": True,
+             "intelligence_request": request}
         ))
 
     def test_a_turn_that_chooses_nothing_passes_nothing(self) -> None:
