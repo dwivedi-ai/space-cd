@@ -220,7 +220,7 @@ class StreamTests(_Sandbox):
         self.assertIs(args[0], info)
         self.assertEqual(args[1], {"profile": "light", "model": None, "effort": "low", "source": "request"})
         self.assertEqual(args[2]["outcome"], OUTCOME)
-        self.assertEqual(kwargs, {"agent_error": False})
+        self.assertEqual(kwargs, {"agent_error": False, "context": None})
 
 
 if __name__ == "__main__":

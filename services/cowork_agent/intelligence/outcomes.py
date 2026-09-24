@@ -32,6 +32,7 @@ def after_turn(
     done_event: dict[str, Any] | None,
     *,
     agent_error: bool,
+    context: dict[str, Any] | None = None,
 ) -> asyncio.Task | None:
     """Record a finished turn in the background. Returns at once."""
     try:
@@ -45,7 +46,7 @@ def after_turn(
         applied = applied or decisions.remembered(stream_info.get("our_session_id")) or dict(_NOTHING_APPLIED)
         task = asyncio.get_running_loop().create_task(asyncio.to_thread(
             _record, stream_info, current, applied,
-            outcome if isinstance(outcome, dict) else None, agent_error,
+            outcome if isinstance(outcome, dict) else None, agent_error, context,
         ))
     except Exception:  # noqa: BLE001 - recording a turn must never cost a reply
         log.exception("intelligence: could not record a turn")
@@ -55,7 +56,8 @@ def after_turn(
     return task
 
 
-def _record(stream_info: dict, current_mode: str, applied: dict, outcome: dict | None, agent_error: bool) -> None:
+def _record(stream_info: dict, current_mode: str, applied: dict, outcome: dict | None,
+            agent_error: bool, context: dict | None = None) -> None:
     session_id = stream_info.get("our_session_id")
     is_new = bool(stream_info.get("is_new_session"))
     project = decisions.session_project(session_id, stream_info.get("agent_id"), new_session=is_new)
@@ -68,4 +70,5 @@ def _record(stream_info: dict, current_mode: str, applied: dict, outcome: dict |
         applied=applied,
         outcome=outcome,
         agent_error=agent_error,
+        context=context,
     )

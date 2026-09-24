@@ -145,11 +145,14 @@ def turn_line(
     applied: dict[str, Any],
     outcome: dict[str, Any] | None,
     agent_error: bool,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One finished turn: the setup it ran with and what it cost.
 
     ``outcome`` is the adapter's (see ``BaseAgentAdapter.stream``), ``None``
     when the agent reported none (it crashed, or the turn was cut short).
+    ``context`` is what XO handed the agent this turn (kind, size, hash; never
+    the text), ``None`` when nothing was added.
     """
     line: dict[str, Any] = {"ts": now_iso(), "type": TURN_TYPE, "schema": SCHEMA, **identity}
     line.update({
@@ -160,6 +163,7 @@ def turn_line(
         "applied": applied,
         "outcome": outcome,
         "agent_error": agent_error,
+        "context": context,
     })
     return line
 

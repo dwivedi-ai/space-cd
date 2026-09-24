@@ -205,6 +205,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         new_session_id: str | None = None,
         model: str | None = None,
         effort: str | None = None,
+        settings_path: "Path | None" = None,
     ) -> list[str]:
         cli = self.config.get("cli_path") or "claude"
         workspace = cwd or str(xo_projects_root())
@@ -237,6 +238,9 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             cmd += ["--model", _flag_value("--model", model)]
         if effort:
             cmd += ["--effort", _flag_value("--effort", effort)]
+        # This turn's context from XO, as a UserPromptSubmit hook (context_hook.py).
+        if settings_path is not None:
+            cmd += ["--settings", str(settings_path)]
         # --resume and --session-id are mutually exclusive at the CLI.
         if native_session_id:
             cmd += ["--resume", native_session_id]
@@ -345,6 +349,10 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         agent_type: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        from services.cowork_agent.adapters.claude_code.context_hook import (
+            cleanup_turn_context,
+            write_turn_context,
+        )
         from services.cowork_agent.adapters.claude_code.mcp_config import (
             cleanup_session_mcp_config,
             write_session_mcp_config,
@@ -355,12 +363,14 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         intelligence = kwargs.get("intelligence") or {}
         cwd = self._resolve_cwd(agent_id)
         mcp_config_path = write_session_mcp_config(user_id, kwargs.get("session_key"))
+        context_settings = write_turn_context(kwargs.get("context"))
         try:
             cmd = self._build_cmd(
                 question, session_id, stream=False, agent_type=agent_type, cwd=cwd,
                 mcp_config_path=mcp_config_path,
                 model=intelligence.get("model"),
                 effort=intelligence.get("effort"),
+                settings_path=context_settings,
             )
             timeout = self.config.get("timeout", 300)
 
@@ -393,6 +403,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             }
         finally:
             cleanup_session_mcp_config(mcp_config_path)
+            cleanup_turn_context(context_settings)
 
     async def stream(
         self,
@@ -401,6 +412,10 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         agent_type: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
+        from services.cowork_agent.adapters.claude_code.context_hook import (
+            cleanup_turn_context,
+            write_turn_context,
+        )
         from services.cowork_agent.adapters.claude_code.mcp_config import (
             cleanup_session_mcp_config,
             write_session_mcp_config,
@@ -448,6 +463,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             native_resume_id = get_native_session_id(sk)
 
         mcp_config_path = write_session_mcp_config(user_id, sk)
+        context_settings = write_turn_context(kwargs.get("context"))
         # Read by the ``finally`` below, so set before anything can fail: a
         # spawn error must surface as itself, not as an UnboundLocalError.
         native_session_id: str | None = None
@@ -460,6 +476,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 new_session_id=pre_allocated_native_sid,
                 model=intelligence.get("model"),
                 effort=intelligence.get("effort"),
+                settings_path=context_settings,
             )
 
             proc = await asyncio.create_subprocess_exec(
@@ -532,6 +549,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 yield {"type": "token", "token": result_text}
         finally:
             cleanup_session_mcp_config(mcp_config_path)
+            cleanup_turn_context(context_settings)
             # Always roll up usage onto the sessions index, even on cancellation.
             # ``nativeSessionId`` itself was already written from inside the loop
             # via ``_patch_native_session_id``; this finally block just updates
