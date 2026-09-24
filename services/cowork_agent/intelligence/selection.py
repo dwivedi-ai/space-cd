@@ -89,39 +89,41 @@ def parse_request(body: dict, agent_name: str) -> RequestChoice | None:
     return RequestChoice(profile=profile, model=model, effort=effort)
 
 
-def select(config: profiles.IntelligenceConfig, request: RequestChoice | None) -> Selection:
-    """The setup for one turn: explicit request fields over the requested profile."""
+def select(
+    config: profiles.IntelligenceConfig,
+    request: RequestChoice | None,
+    *,
+    session: dict[str, Any] | None = None,
+    decided: str | None = None,
+    use_default: bool = False,
+) -> Selection:
+    """The setup for one turn.
+
+    Explicit request fields always win, field by field. Under them, the first
+    of: the requested profile; the setup the session started with
+    (``session``, so a resumed turn never switches); the profile the decision
+    model picked (``decided``); the default setup (``use_default``). With none
+    of these, nothing is set and no flag is passed.
+    """
     request = request or RequestChoice()
-    chosen = config.profile(request.profile) if request.profile else None
-    base = chosen.setup if chosen else profiles.Setup(model=None, effort=None)
+    requested = config.profile(request.profile) if request.profile else None
+    picked = config.profile(decided) if decided else None
+    if requested is not None:
+        profile, base, source = requested.id, requested.setup, "request"
+    elif session is not None:
+        profile = session.get("profile")
+        base = profiles.Setup(model=session.get("model"), effort=session.get("effort"))
+        source = "session"
+    elif picked is not None:
+        profile, base, source = picked.id, picked.setup, "sage"
+    elif use_default:
+        profile, base, source = None, config.default, "default"
+    else:
+        profile, base = None, profiles.Setup(model=None, effort=None)
+        source = None if request.empty else "request"
     return Selection(
-        profile=chosen.id if chosen else None,
+        profile=profile,
         model=request.model or base.model,
         effort=request.effort or base.effort,
-        source=None if request.empty else "request",
+        source=source,
     )
-
-
-async def turn_selection(stream_info: dict) -> dict[str, Any] | None:
-    """The ``intelligence`` keyword for the adapter, or ``None`` to pass nothing.
-
-    ``None`` when the agent has no profiles or the turn sets no flag, so an
-    agent (or a request) that does not use profiles runs exactly as before.
-    Never raises: a failure here falls back to no flags, never to no reply.
-    """
-    try:
-        config = profiles.load(stream_info.get("agent_name") or "")
-        if config is None:
-            return None
-        selection = select(config, stream_info.get("intelligence_request"))
-    except Exception:  # noqa: BLE001 - the reply matters more than the setup
-        log.exception("intelligence: could not choose a setup; running without flags")
-        return None
-    if selection.model is None and selection.effort is None:
-        return None
-    log.info(
-        "intelligence: session %s runs with profile=%s model=%s effort=%s (%s)",
-        stream_info.get("our_session_id"), selection.profile, selection.model,
-        selection.effort, selection.source,
-    )
-    return selection.as_kwargs()

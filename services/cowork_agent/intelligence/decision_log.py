@@ -23,6 +23,7 @@ from typing import Any
 from services.cowork_agent import project_layout
 from services.storage.atomic_write import append_jsonl
 from services.storage.layout import sessions_dir
+from services.storage.reader import read_jsonl_tail_reverse
 from services.timestamps import now_iso
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,34 @@ def log_path(project: str | None) -> tuple[Path, dict[str, str]] | None:
             log.warning("intelligence: no safe runtime home for project %r; decision not logged", project)
             return None
     return root / SUBDIR / FILENAME, identity
+
+
+def existing_path(project: str | None) -> Path | None:
+    """The log a project's decisions are in, for reading. Creates nothing."""
+    if not project:
+        return sessions_dir() / SUBDIR / FILENAME
+    root = project_layout.runtime_dir_for_project(project)
+    if root is None:
+        try:
+            root = project_layout.runtime_dir(project_layout.runtime_key(project))
+        except ValueError:
+            return None
+    return root / SUBDIR / FILENAME
+
+
+#: How far back a resumed turn looks for its session's decision.
+FIND_LIMIT = 2000
+
+
+def find(project: str | None, session_id: str) -> dict[str, Any] | None:
+    """The newest decision line for ``session_id``, or ``None``. Blocking I/O."""
+    path = existing_path(project)
+    if path is None or not path.is_file():
+        return None
+    for line in read_jsonl_tail_reverse(path, limit=FIND_LIMIT, types=frozenset({TYPE})):
+        if line.get("session_id") == session_id:
+            return line
+    return None
 
 
 def request_record(content: str) -> dict[str, Any]:

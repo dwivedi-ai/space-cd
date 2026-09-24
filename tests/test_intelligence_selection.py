@@ -14,7 +14,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from services.cowork_agent.intelligence import profiles, selection
+from services.cowork_agent.intelligence import decisions, profiles, selection
 
 DOCUMENT = {
     "schema": 1,
@@ -83,7 +83,7 @@ class NoProfilesTests(_WithConfig):
 
     def test_and_gets_no_intelligence_keyword(self) -> None:
         info = {"agent_name": "sample_agent", "intelligence_request": None}
-        self.assertIsNone(asyncio.run(selection.turn_selection(info)))
+        self.assertIsNone(asyncio.run(decisions.turn_selection(info)))
 
 
 class SelectTests(unittest.TestCase):
@@ -109,7 +109,7 @@ class SelectTests(unittest.TestCase):
 
 class TurnSelectionTests(_WithConfig):
     def turn(self, request):
-        return asyncio.run(selection.turn_selection(
+        return asyncio.run(decisions.turn_selection(
             {"agent_name": "sample_agent", "our_session_id": "s1", "intelligence_request": request}
         ))
 
@@ -123,7 +123,7 @@ class TurnSelectionTests(_WithConfig):
 
     def test_a_failure_falls_back_to_no_flags(self) -> None:
         with patch.object(selection, "select", side_effect=RuntimeError("boom")), \
-             self.assertLogs(selection.log, "ERROR"):
+             self.assertLogs(decisions.log, "ERROR"):
             self.assertIsNone(self.turn(selection.RequestChoice(profile="light")))
 
 

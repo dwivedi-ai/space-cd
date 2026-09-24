@@ -151,7 +151,7 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
     queue: asyncio.Queue = asyncio.Queue()
     # Model/effort for this turn, only for agents that ship intelligence
     # profiles and only when the turn sets something; otherwise nothing is passed.
-    selection = await intelligence.turn_selection(stream_info)
+    selection = await intelligence_decisions.turn_selection(stream_info)
     extra = {"intelligence": selection} if selection else {}
 
     async def _produce():

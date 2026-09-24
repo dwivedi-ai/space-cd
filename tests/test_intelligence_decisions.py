@@ -100,11 +100,11 @@ class StartTests(_Sandbox):
         async def go():
             with patch.object(profiles, "load", return_value=CONFIG), \
                  patch.object(decisions, "_decide", AsyncMock(return_value=None)):
-                task = decisions.start(agent_name="sample_agent", text="hi", session_id="s1",
-                                       project=None, request=None)
-                self.assertIn(task, decisions._tasks)
-                await task
-            return task
+                pending = decisions.start(agent_name="sample_agent", text="hi", session_id="s1",
+                                          project=None, request=None)
+                self.assertIn(pending.task, decisions._tasks)
+                await pending.task
+            return pending.task
         task = asyncio.run(go())
         self.assertNotIn(task, decisions._tasks)
 
