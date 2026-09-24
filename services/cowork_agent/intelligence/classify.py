@@ -38,7 +38,9 @@ CHOICE_INSTRUCTIONS = (
     "Which setup fits the work it asks for? Choose unknown when none clearly fits "
     "or the request is too vague to tell."
 )
-UNKNOWN_DESCRIPTION = "none of the other options clearly fits, or the request is too vague to tell"
+# Narrow on purpose: with "or the request is too vague to tell" here, Sage
+# filed greetings ("say hi", "hello") under unknown, which runs the default.
+UNKNOWN_DESCRIPTION = "none of the other options fits this request"
 
 TAGS_ID = "needs"
 TAGS_INSTRUCTIONS = (
