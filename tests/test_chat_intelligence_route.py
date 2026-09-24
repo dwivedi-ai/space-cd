@@ -105,7 +105,7 @@ class StreamTests(unittest.TestCase):
     def test_the_chosen_setup_reaches_the_adapter(self) -> None:
         kwargs = self.run_stream(selection.RequestChoice(profile="deep"))
         self.assertEqual(kwargs["intelligence"],
-                         {"profile": "deep", "model": None, "effort": "high", "source": "request"})
+                         {"profile": "deep", "model": "claude-opus-5-5", "effort": "high", "source": "request"})
 
     def test_nothing_chosen_passes_no_keyword(self) -> None:
         self.assertNotIn("intelligence", self.run_stream(selection.RequestChoice()))

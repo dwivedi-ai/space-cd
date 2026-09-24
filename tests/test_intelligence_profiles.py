@@ -55,12 +55,15 @@ class ShippedConfigTests(unittest.TestCase):
         config = profiles.load("claude_code")
         self.assertEqual(config.default, profiles.Setup(model=None, effort=None))
 
-    def test_profiles_vary_effort_not_model(self) -> None:
+    def test_profiles_are_tiered_by_model_and_effort(self) -> None:
+        # Checked against claude 2.1.281: each model accepts its effort level.
         config = profiles.load("claude_code")
-        self.assertEqual({p.model for p in config.profiles}, {None})
         self.assertEqual(
-            {p.id: p.effort for p in config.profiles},
-            {"light": "low", "standard": "medium", "deep": "high", "research": "medium"},
+            {p.id: (p.model, p.effort) for p in config.profiles},
+            {"light": ("claude-haiku-4-5-20251001", "low"),
+             "standard": ("claude-sonnet-5", "medium"),
+             "deep": ("claude-opus-5-5", "high"),
+             "research": ("claude-sonnet-5", "medium")},
         )
 
 
