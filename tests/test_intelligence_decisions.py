@@ -79,6 +79,15 @@ class _Sandbox(unittest.TestCase):
                                           "s1", project, request))
 
 
+class HermeticTests(unittest.TestCase):
+    def test_the_suite_runs_with_intelligence_off_and_no_real_key(self) -> None:
+        # tests/__init__.py pins these so a developer's .env cannot turn routing
+        # on, write to the real ~/.quirq, or spend Levanto decision units.
+        import server  # noqa: F401 - loads the checkout's .env, as some tests do
+        self.assertEqual(os.environ.get(mode.ENV_MODE), "off")
+        self.assertEqual(os.environ.get("LEVANTO_API_KEY"), "test-placeholder-not-a-key")
+
+
 class StartTests(_Sandbox):
     def start(self) -> object:
         async def go():

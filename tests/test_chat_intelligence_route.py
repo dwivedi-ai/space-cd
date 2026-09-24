@@ -9,7 +9,10 @@ agent without profiles, streams exactly as before.
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
@@ -75,6 +78,11 @@ class _FakeDispatcher:
 
 class StreamTests(unittest.TestCase):
     def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(os.environ, {"QUIRQ_STATE_ROOT": str(Path(tmp.name) / "state")})
+        env.start()
+        self.addCleanup(env.stop)
         _FakeDispatcher.calls = []
         decisions._session_setups.clear()
         self.addCleanup(decisions._session_setups.clear)
