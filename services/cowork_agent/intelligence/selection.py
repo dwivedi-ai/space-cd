@@ -7,7 +7,10 @@ field. ``model`` predates profiles: a value holding a ``/`` is a routing id
 from ``/api/models`` (``<prefix>/<agent>``), not a model, and is ignored as it
 always was.
 
-A turn with none of these fields runs exactly as before: no flags.
+What a session's first turn runs with sticks for the session: a resumed turn
+re-applies it, with that turn's own explicit fields on top
+(``decisions.turn_selection``). A session whose first turn chose nothing runs
+exactly as before: no flags.
 """
 
 from __future__ import annotations

@@ -10,10 +10,11 @@ returns at once: the decision runs as a task beside the agent.
   failure gets the default setup. The late answer is still logged
   (``sage_late``).
 
-Either way, an explicit profile, model or effort in the request wins, and a
-session keeps the setup it started with: :func:`turn_selection` re-applies it
-on every resumed turn (remembered in memory, and found again in the decision
-log after a restart), so the model never changes mid-session.
+Either way, an explicit profile, model or effort in the request wins. In
+every mode a session keeps the setup it started with: :func:`turn_selection`
+re-applies it on every resumed turn, so the model never changes mid-session.
+It is remembered in memory, and after a restart found again in the decision
+log (``off`` writes no log, so there it lasts until a restart).
 
 Every new session's outcome is one line in the decision log (``decision_log``).
 """
@@ -180,16 +181,20 @@ def _setup_from_log(session_id: str) -> dict[str, Any] | None:
 
 
 async def session_setup(session_id: str | None) -> dict[str, Any] | None:
-    """The setup a session started with, or ``None`` if it was never decided."""
+    """The setup a session started with, or ``None`` if it started with none.
+
+    Remembered in memory from its first turn; after a restart, found in the
+    decision log (written in ``shadow`` and ``on``). A miss is remembered too,
+    so an old session costs one lookup, not one per turn.
+    """
     if not session_id:
         return None
-    cached = _session_setups.get(session_id)
-    if cached is not None:
-        return cached
-    applied = await asyncio.to_thread(_setup_from_log, session_id)
-    if applied is not None:
-        remember(session_id, applied)
-    return applied
+    if session_id not in _session_setups:
+        applied = await asyncio.to_thread(_setup_from_log, session_id)
+        remember(session_id, applied or {})
+    applied = _session_setups[session_id]
+    has_setup = any(applied.get(field) for field in ("profile", "model", "effort"))
+    return applied if has_setup else None
 
 
 async def _first_turn_setup(pending: PendingDecision | None) -> selection.Selection | None:
@@ -214,15 +219,19 @@ async def turn_selection(stream_info: dict) -> dict[str, Any] | None:
         if config is None:
             return None
         request = stream_info.get("intelligence_request")
-        if mode.mode() != mode.ON:
-            chosen = selection.select(config, request)
-        elif stream_info.get("is_new_session"):
-            chosen = (await _first_turn_setup(stream_info.get("intelligence_decision"))
-                      or selection.select(config, request, use_default=True))
+        session_id = stream_info.get("our_session_id")
+        if stream_info.get("is_new_session"):
+            if mode.mode() == mode.ON:
+                chosen = (await _first_turn_setup(stream_info.get("intelligence_decision"))
+                          or selection.select(config, request, use_default=True))
+            else:
+                chosen = selection.select(config, request)
+            remember(session_id, chosen.as_kwargs())
         else:
-            # A resumed turn keeps the session's first setup; a session that was
-            # never decided keeps running as it started, with no flags.
-            session = await session_setup(stream_info.get("our_session_id"))
+            # In every mode a resumed turn keeps the session's first setup, with
+            # this turn's explicit fields on top; a session that started with
+            # nothing chosen keeps running with no flags.
+            session = await session_setup(session_id)
             chosen = selection.select(config, request, session=session)
     except Exception:  # noqa: BLE001 - the reply matters more than the setup
         log.exception("intelligence: could not choose a setup; running without flags")

@@ -183,6 +183,34 @@ class ResumedTurnTests(_Sandbox):
     def test_a_session_that_was_never_decided_runs_without_flags(self) -> None:
         self.assertIsNone(self.resumed_turn(session_id="older-session"))
 
+    def test_shadow_keeps_an_explicit_first_setup(self) -> None:
+        with patch.dict(os.environ, {mode.ENV_MODE: "shadow"}):
+            first, line = self.first_turn(answer("deep"), request=selection.RequestChoice(profile="light"))
+            self.assertEqual(first, {"profile": "light", "model": None, "effort": "low", "source": "request"})
+            self.assertEqual(self.resumed_turn(), self.same_setup(first))
+            # After a restart it comes back from the decision log.
+            sessions_io.write_session_row("", "sample::web:abcd1234", {
+                "sessionId": "s1", "nativeSessionId": "n1", "directory": "/x", "backend": "sample_agent", "updatedAt": 1})
+            decisions._session_setups.clear()
+            self.assertEqual(self.resumed_turn(), self.same_setup(first))
+
+    def test_off_keeps_an_explicit_first_setup_until_a_restart(self) -> None:
+        with patch.dict(os.environ, {mode.ENV_MODE: "off"}):
+            first = asyncio.run(decisions.turn_selection({
+                "agent_name": "sample_agent", "our_session_id": "s9", "is_new_session": True,
+                "intelligence_request": selection.RequestChoice(effort="high"),
+                "intelligence_decision": None}))
+            self.assertEqual(first["effort"], "high")
+            self.assertEqual(self.resumed_turn("s9")["effort"], "high")
+            decisions._session_setups.clear()  # off writes no log to recover it from
+            self.assertIsNone(self.resumed_turn("s9"))
+
+    def test_an_old_session_is_looked_up_once(self) -> None:
+        with patch.object(decisions, "_setup_from_log", return_value=None) as lookup:
+            self.assertIsNone(self.resumed_turn("older-session"))
+            self.assertIsNone(self.resumed_turn("older-session"))
+        self.assertEqual(lookup.call_count, 1)
+
     def test_shadow_applies_nothing(self) -> None:
         with patch.dict(os.environ, {mode.ENV_MODE: "shadow"}):
             kwargs, line = self.first_turn(answer("deep"))
