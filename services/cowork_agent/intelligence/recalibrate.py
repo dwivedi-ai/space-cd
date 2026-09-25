@@ -5,8 +5,10 @@ kind should route differently. Here, when a new session is decided:
 
 1. Its **key** says what kind of request it is: its primary area (the
    confident area with the highest probability, once requests are tagged with
-   the project's areas), else the three ``needs_*`` facts Sage tagged it with,
-   e.g. ``code=1,search=0,outside=0`` (``?`` where Sage was unsure).
+   the project's areas), else whether Sage said it writes code: ``code=1`` or
+   ``code=0``. Only that fact: Sage is most accurate on it and rarely unsure,
+   while its "not sure" on the other facts split sessions into groups too
+   small to act on. No key when Sage was unsure whether it writes code.
 2. The **evidence** is the earlier finished sessions in the same log (the
    project's, or the no-project log) with the same key that ran on the same
    setup as the one decided now: the picked profile, or the default. Each is
@@ -44,14 +46,6 @@ MIN_RATE = 0.6
 UP = "up"
 DOWN = "down"
 
-# Short names for the request's own facts (``classify.TAGS``), in key order.
-_KEY_TAGS = (("code", "needs_code_writing"), ("search", "needs_search"), ("outside", "needs_external_lookup"))
-
-
-def _flag(value: object) -> str:
-    return "1" if value is True else "0" if value is False else "?"
-
-
 def key(row: dict[str, Any]) -> str | None:
     """What kind of request a session was, for matching it to past ones.
 
@@ -67,10 +61,10 @@ def key(row: dict[str, Any]) -> str | None:
         ]
         if confident:
             return f"area={max(confident)[1]}"
-    tags = row.get("tags") or {}
-    if not any(name in tags for _short, name in _KEY_TAGS):
+    code = (row.get("tags") or {}).get("needs_code_writing")
+    if not isinstance(code, bool):
         return None
-    return ",".join(f"{short}={_flag(tags.get(name))}" for short, name in _KEY_TAGS)
+    return f"code={int(code)}"
 
 
 _key_of = key  # ``rule`` takes a ``key`` argument, which hides the function

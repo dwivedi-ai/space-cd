@@ -39,7 +39,7 @@ CONFIG = profiles.parse({
 CODE_TAGS = {"needs_code_writing": {"p": 0.9, "applies": True},
              "needs_search": {"p": 0.2, "applies": False},
              "needs_external_lookup": {"p": 0.1, "applies": False}}
-CODE_KEY = "code=1,search=0,outside=0"
+CODE_KEY = "code=1"
 TALK_TAGS = {"needs_code_writing": {"p": 0.1, "applies": False},
              "needs_search": {"p": 0.1, "applies": False},
              "needs_external_lookup": {"p": 0.1, "applies": False}}
@@ -106,12 +106,18 @@ class TierTests(unittest.TestCase):
 
 
 class KeyTests(unittest.TestCase):
-    def test_the_requests_own_tags(self) -> None:
+    def test_only_whether_the_request_writes_code(self) -> None:
         self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": True, "needs_search": False,
                                                    "needs_external_lookup": False}}), CODE_KEY)
-        self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": None, "needs_search": True,
-                                                   "needs_external_lookup": False}}),
-                         "code=?,search=1,outside=0")
+        # Sage's "not sure" on the other facts no longer splits the group.
+        self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": False, "needs_search": None,
+                                                   "needs_external_lookup": None}}), "code=0")
+        self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": False, "needs_search": True,
+                                                   "needs_external_lookup": False}}), "code=0")
+
+    def test_unsure_whether_it_writes_code_no_key(self) -> None:
+        self.assertIsNone(recalibrate.key({"tags": {"needs_code_writing": None, "needs_search": True}}))
+        self.assertIsNone(recalibrate.key({"tags": {"needs_search": False, "needs_external_lookup": False}}))
 
     def test_no_tags_no_key(self) -> None:
         self.assertIsNone(recalibrate.key({"tags": {}}))
@@ -130,8 +136,7 @@ class KeyTests(unittest.TestCase):
 
 
 def labelled(profile: str | None, label: str, key: str = CODE_KEY, sid: str = "x") -> dict:
-    tags = dict(zip(("needs_code_writing", "needs_search", "needs_external_lookup"),
-                    (v == "1" if v != "?" else None for v in (p.split("=")[1] for p in key.split(",")))))
+    tags = {"needs_code_writing": key == CODE_KEY}
     return {"session_id": sid, "applied": setup_of(profile), "tags": tags, "label": label}
 
 
@@ -160,7 +165,7 @@ class RuleTests(unittest.TestCase):
     def test_only_the_same_setup_and_key_count(self) -> None:
         rows = ([labelled("light", "under")] * 5
                 + [labelled("standard", "under")] * 5
-                + [labelled("light", "under", key="code=0,search=0,outside=0")] * 5
+                + [labelled("light", "under", key="code=0")] * 5
                 + [labelled("light", None)] * 5)  # unfinished sessions have no label
         self.assertEqual(self.rule("standard", rows)["evidence"], 5)
         self.assertEqual(self.rule("light", rows)["to"], "standard")
