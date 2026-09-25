@@ -2,6 +2,7 @@
   "schema": 1,
   "default": {"model": null, "effort": null},
   "efforts": ["low", "medium", "high", "xhigh", "max"],
+  "tiers": ["light", "standard", "deep"],
   "profiles": [
     {"id": "light", "model": "claude-haiku-4-5-20251001", "effort": "low",
      "use_when": "greetings, small talk and short conversational replies; questions, explanations and small lookups; no code changes"},

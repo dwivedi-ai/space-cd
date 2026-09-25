@@ -18,6 +18,14 @@ turn network calls on. ``XO_INTELLIGENCE_TIMEOUT_S`` bounds each Sage call
 - ``off`` (the default): nothing is added to any turn.
 - ``note``: a fixed, harmless note, to prove the channel end to end (plan
   step 5). What is actually relevant comes later (step 6).
+
+``XO_INTELLIGENCE_RECALIBRATE`` switches recalibration from the past record
+(``recalibrate.py``, plan step 4b), on top of a decision:
+
+- ``off`` (the default): nothing is looked up.
+- ``shadow``: the one-tier correction the past record would make is logged on
+  the decision line; the setup is not changed.
+- ``on``: for now the same as ``shadow``. Applying the correction is step 4b-3.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ log = logging.getLogger(__name__)
 ENV_MODE = "XO_INTELLIGENCE_MODE"
 ENV_TIMEOUT = "XO_INTELLIGENCE_TIMEOUT_S"
 ENV_CONTEXT = "XO_INTELLIGENCE_CONTEXT"
+ENV_RECALIBRATE = "XO_INTELLIGENCE_RECALIBRATE"
 
 OFF = "off"
 SHADOW = "shadow"
@@ -70,4 +79,14 @@ def context_mode() -> str:
     if raw and f"context:{raw}" not in _warned:
         _warned.add(f"context:{raw}")
         log.warning("%s=%r is not one of %s; no context is added", ENV_CONTEXT, raw, ", ".join(CONTEXT_MODES))
+    return OFF
+
+
+def recalibrate_mode() -> str:
+    raw = (os.getenv(ENV_RECALIBRATE, "") or "").strip().lower()
+    if raw in MODES:
+        return raw
+    if raw and f"recalibrate:{raw}" not in _warned:
+        _warned.add(f"recalibrate:{raw}")
+        log.warning("%s=%r is not one of %s; recalibration stays off", ENV_RECALIBRATE, raw, ", ".join(MODES))
     return OFF

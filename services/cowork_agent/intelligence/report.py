@@ -28,12 +28,14 @@ def log_files() -> list[Path]:
     return files + ([root] if root.is_file() else [])
 
 
-def _read(path: Path) -> Iterator[dict]:
+def _read(path: Path, limit: int | None = None) -> Iterator[dict]:
+    """The log's lines, oldest first; with ``limit``, only its last ``limit`` lines."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return
-    for raw in text.splitlines():
+    raws = text.splitlines()
+    for raw in raws[-limit:] if limit else raws:
         try:
             line = json.loads(raw)
         except ValueError:
@@ -79,14 +81,17 @@ def _effort_rank(runtime: str | None):
     return rank, top
 
 
-def session_rows(since: str | None = None) -> list[dict[str, Any]]:
+def session_rows(since: str | None = None, *, limit: int | None = None) -> list[dict[str, Any]]:
     """One row per session with a decision or a turn line, oldest first,
-    each labelled right-sized, under- or over-powered (``labels.py``)."""
+    each labelled right-sized, under- or over-powered (``labels.py``).
+
+    ``limit`` reads only the last ``limit`` lines of each log (recalibration
+    reads the record this way on every new session)."""
     rows: list[dict[str, Any]] = []
     for path in log_files():
         files = _files_edited(path)
         by_session: dict[str, dict[str, Any]] = defaultdict(lambda: {"decision": None, "turns": []})
-        for line in _read(path):
+        for line in _read(path, limit):
             if line.get("type") == decision_log.TYPE:
                 by_session[line["session_id"]]["decision"] = line
             elif line.get("type") == decision_log.TURN_TYPE:
@@ -120,6 +125,8 @@ def session_rows(since: str | None = None) -> list[dict[str, Any]]:
                 "reason": ((decision or {}).get("decision") or {}).get("reason"),
                 "decided_profile": ((decision or {}).get("decision") or {}).get("profile"),
                 "tags": {k: v.get("applies") for k, v in (sage.get("tags") or {}).items() if isinstance(v, dict)},
+                "areas": (decision or {}).get("areas"),
+                "correction": (decision or {}).get("correction"),
                 "sage_units": sage.get("units"),
                 "sage_errors": [e.get("kind") for e in sage.get("errors") or []],
                 "applied": applied,
@@ -161,6 +168,9 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "by_decided_profile": per_profile,
         "labels_by_setup": labels.counts(rows),
         "label_thresholds": labels.thresholds(rows),
+        "would_correct": dict(Counter(
+            f"{r['correction'].get('from')}→{r['correction'].get('to')}"
+            for r in rows if isinstance(r.get("correction"), dict))),
     }
 
 

@@ -5,6 +5,7 @@
     {"schema": 1,
      "default": {"model": null, "effort": null},
      "efforts": ["low", "medium", "high", "xhigh", "max"],
+     "tiers": ["light", "standard", "deep"],
      "profiles": [
        {"id": "deep", "model": null, "effort": "high",
         "use_when": "features, debugging or refactors across several parts of the codebase"}]}
@@ -15,6 +16,11 @@
   profiles and requests against it, so it never needs to know the agent.
 - ``profiles`` are what a request (or the decision model) chooses from. Each
   ``use_when`` is the plain-English description the choice is made against.
+- ``tiers`` (optional) orders profiles from weakest to strongest, for
+  recalibration (``recalibrate.py``): a correction moves a session one step
+  along it. The default sits above its top, since it passes no flags and runs
+  the agent's own (strongest) setup. A profile left out, such as one for a
+  different kind of work, is never moved. No ``tiers``: nothing is moved.
 
 The file is re-read when it changes, so editing it changes the choice with no
 code change and no restart. A missing file means the agent does not use
@@ -84,6 +90,8 @@ class IntelligenceConfig:
     profiles: tuple[Profile, ...]
     #: sha256 of the file's bytes, so a logged decision names the version it used.
     sha256: str = ""
+    #: profile ids from weakest to strongest; empty when the file lists none.
+    tiers: tuple[str, ...] = ()
 
     def profile(self, profile_id: str) -> Profile | None:
         for profile in self.profiles:
@@ -168,8 +176,18 @@ def parse(document: object, *, sha256: str = "") -> IntelligenceConfig:
             use_when=use_when.strip(),
         ))
 
+    tiers = document.get("tiers", [])
+    if not isinstance(tiers, list) or not all(isinstance(t, str) for t in tiers):
+        raise ProfileError("tiers must be a list of profile ids")
+    for tier in tiers:
+        if tier not in seen:
+            raise ProfileError(f"tiers: {tier!r} is not a profile")
+    if len(set(tiers)) != len(tiers):
+        raise ProfileError("tiers: a profile is listed twice")
+
     return IntelligenceConfig(
         default=default_setup, efforts=efforts, profiles=tuple(profiles), sha256=sha256,
+        tiers=tuple(tiers),
     )
 
 

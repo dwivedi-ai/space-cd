@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from services.cowork_agent.engine import sessions_io
-from services.cowork_agent.intelligence import classify, decision_log, mode, profiles, selection
+from services.cowork_agent.intelligence import classify, decision_log, mode, profiles, recalibrate, selection
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +142,11 @@ async def _decide(
 
         decision = await deciding
         setup_decided = decided_setup(config, decision)
+        # After the setup is resolved, so the past record never delays a reply.
+        recalibration = await asyncio.to_thread(
+            recalibrate.evaluate, config, project=project, session_id=session_id,
+            profile=decision.profile, sage=decision.sage, request=request,
+        )
         await asyncio.to_thread(
             decision_log.record,
             project,
@@ -156,6 +161,7 @@ async def _decide(
                       "model": setup_decided.model, "effort": setup_decided.effort},
             applied=applied.as_kwargs(),
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
+            **recalibration,
         )
         return decision
     except asyncio.CancelledError:

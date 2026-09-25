@@ -113,7 +113,11 @@ def build_line(
     decision: dict[str, Any],
     applied: dict[str, Any],
     latency_ms: float,
+    correction: dict[str, Any] | None = None,
+    recalibrate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """``correction`` / ``recalibrate``: what the past record would change
+    (``recalibrate.py``); each left out when ``None``."""
     line: dict[str, Any] = {"ts": now_iso(), "type": TYPE, "schema": SCHEMA, **identity}
     line.update({
         "session_id": session_id,
@@ -126,6 +130,9 @@ def build_line(
         "applied": applied,
         "latency_ms": latency_ms,
     })
+    for name, value in (("correction", correction), ("recalibrate", recalibrate)):
+        if value is not None:
+            line[name] = value
     if len(json.dumps(line).encode("utf-8")) > MAX_LINE_BYTES:
         # Only a very long profile list gets here; its per-option
         # probabilities are what can be dropped.

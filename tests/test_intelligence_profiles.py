@@ -50,6 +50,10 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertEqual(config.profile_ids, ("light", "standard", "deep", "research"))
         self.assertEqual(config.efforts, ("low", "medium", "high", "xhigh", "max"))
 
+    def test_the_recalibration_ladder(self) -> None:
+        # research is a different kind of work, not a strength: it is never moved.
+        self.assertEqual(profiles.load("claude_code").tiers, ("light", "standard", "deep"))
+
     def test_the_default_is_the_current_configuration(self) -> None:
         # No flags at all: Claude Code's own settings decide, exactly as before.
         config = profiles.load("claude_code")

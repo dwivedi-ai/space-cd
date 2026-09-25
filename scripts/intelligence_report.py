@@ -25,7 +25,8 @@ from services.cowork_agent.intelligence import report  # noqa: E402
 COLUMNS = [
     ("started", 20), ("project", 14), ("sage_chosen", 11), ("sage_probability", 5),
     ("reason", 13), ("applied", 12), ("turn_lines", 5), ("agent_turns", 6),
-    ("cost_usd", 8), ("duration_ms", 9), ("files_edited", 5), ("label", 6), ("tags", 30),
+    ("cost_usd", 8), ("duration_ms", 9), ("files_edited", 5), ("label", 6), ("correction", 10),
+    ("tags", 30),
 ]
 
 
@@ -33,6 +34,9 @@ def _cell(row: dict, name: str) -> str:
     value = row.get(name)
     if name == "applied":
         value = (value or {}).get("profile") or (value or {}).get("effort") or "-"
+    elif name == "correction":
+        # What recalibration would change (4b-2): one tier up or down.
+        value = f"{'↑' if value.get('direction') == 'up' else '↓'}{value.get('to')}" if isinstance(value, dict) else None
     elif name == "tags":
         value = " ".join(k.replace("needs_", "") for k, v in (value or {}).items() if v) or "-"
     elif name == "sage_probability" and isinstance(value, float):
