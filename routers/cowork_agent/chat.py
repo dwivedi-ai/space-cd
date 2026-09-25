@@ -24,6 +24,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from services.cowork_agent.adapters.loader import try_load_capability
 from services.cowork_agent.engine.chat_state import active_streams
+from services.cowork_agent.intelligence import context as intelligence_context
+from services.cowork_agent.intelligence import decisions as intelligence_decisions
+from services.cowork_agent.intelligence import outcomes as intelligence_outcomes
+from services.cowork_agent.intelligence import selection as intelligence
 from services.xo_manifest import resolve_agent_name
 
 log = logging.getLogger(__name__)
@@ -146,7 +150,17 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
 
     dispatcher = AgentDispatcher(agent_name)
     final_native_session_id = None
+    final_event = None
+    agent_error = False
     queue: asyncio.Queue = asyncio.Queue()
+    # Model/effort for this turn, only for agents that ship intelligence
+    # profiles and only when the turn sets something; otherwise nothing is passed.
+    selection = await intelligence_decisions.turn_selection(stream_info)
+    extra = {"intelligence": selection} if selection else {}
+    # What XO hands the agent this turn beside the user's message (XO_INTELLIGENCE_CONTEXT).
+    context = intelligence_context.turn_context(stream_info)
+    if context:
+        extra["context"] = context
 
     async def _produce():
         try:
@@ -159,6 +173,7 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
                 model=model,
                 is_new_session=is_new_session,
                 user_id=user_id,
+                **extra,
             ):
                 await queue.put(event)
         except Exception as exc:
@@ -181,6 +196,7 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
             event = item
             if event.get("done"):
                 final_native_session_id = event.get("native_session_id")
+                final_event = event
                 break
             elif event.get("type") == "token":
                 yield f"id: {event_id}\nevent: text-delta\ndata: {json.dumps({'text': event.get('token', '')})}\n\n"
@@ -194,10 +210,15 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
                 yield f"id: {event_id}\nevent: model-loading\ndata: {json.dumps({'label': event.get('label', '')})}\n\n"
                 event_id += 1
             elif event.get("type") == "error":
+                agent_error = True
                 yield f"id: {event_id}\nevent: agent-error\ndata: {json.dumps({'error_message': event.get('error', 'Stream error')})}\n\n"
                 event_id += 1
     finally:
         producer.cancel()
+
+    # What the turn ran with and cost, logged in the background (shadow / on only).
+    intelligence_outcomes.after_turn(stream_info, selection, final_event, agent_error=agent_error,
+                                     context=intelligence_context.record(context))
 
     resolved_session_id = our_session_id or final_native_session_id
     if _session_id_out is not None:
@@ -279,9 +300,21 @@ async def chat_prompt(request: Request):
             is_new_session=is_new_session,
         )
 
+    # Optional per-request profile / effort / model, for agents that ship
+    # intelligence profiles. A body without them runs exactly as before.
+    try:
+        intelligence_request = intelligence.parse_request(body, agent_name)
+    except intelligence.RequestError as exc:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     # Default: route through AgentDispatcher.
     our_session_id = str(uuid.uuid4()) if is_new_session else session_id
     stream_id = str(uuid.uuid4())
+    # Decide a new session's profile once, in the background (XO_INTELLIGENCE_MODE).
+    intelligence_decision = intelligence_decisions.start(
+        agent_name=agent_name, text=text, session_id=our_session_id,
+        project=agent_id, request=intelligence_request,
+    ) if is_new_session else None
     active_streams[stream_id] = {
         "question": text,
         "session_id": our_session_id,
@@ -292,6 +325,8 @@ async def chat_prompt(request: Request):
         "model": body.get("model"),
         "is_new_session": is_new_session,
         "user_id": await _resolve_user_id(request),
+        "intelligence_request": intelligence_request,
+        "intelligence_decision": intelligence_decision,
     }
     return {"stream_id": stream_id, "session_id": our_session_id}
 

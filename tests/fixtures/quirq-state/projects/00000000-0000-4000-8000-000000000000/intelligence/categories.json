@@ -1,0 +1,56 @@
+{
+ "schema": 1,
+ "source": "drafted",
+ "ts": "2026-01-01T08:00:00Z",
+ "code_files": 412,
+ "categories": [
+  {
+   "id": "area_0",
+   "description": "the HTTP API routes and request handling; not the services they call"
+  },
+  {
+   "id": "area_1",
+   "description": "background jobs and scheduling; not the UI that lists them"
+  },
+  {
+   "id": "area_2",
+   "description": "sign-in, tokens and secrets; not third-party connectors"
+  },
+  {
+   "id": "area_3",
+   "description": "storage primitives: atomic writes, locks and paths"
+  },
+  {
+   "id": "area_4",
+   "description": "the web UI shell: navigation, toolbar and routing between views"
+  },
+  {
+   "id": "area_5",
+   "description": "the web UI's project views"
+  },
+  {
+   "id": "area_6",
+   "description": "connectors to external services"
+  },
+  {
+   "id": "area_7",
+   "description": "event ingestion from agent session files"
+  },
+  {
+   "id": "area_8",
+   "description": "stats, timeline and activity views built from events"
+  },
+  {
+   "id": "area_9",
+   "description": "install, update and uninstall scripts"
+  },
+  {
+   "id": "area_10",
+   "description": "tests for the backend"
+  },
+  {
+   "id": "area_11",
+   "description": "tests for the web UI"
+  }
+ ]
+}

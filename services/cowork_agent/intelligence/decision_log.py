@@ -1,0 +1,205 @@
+"""The decision log: one JSON line per new session, then one per turn, machine-local.
+
+- a project's chats: ``~/.quirq/projects/<key>/intelligence/decisions.jsonl``
+- chats with no project: ``~/.quirq/sessions/intelligence/decisions.jsonl``
+
+Never in the project folder and never synced. A line records what was asked
+(a short preview and a hash, not the whole text), what Sage answered, the
+profile that would be chosen and why, and what the session actually ran with
+(``intelligence.decision``). Every finished turn then adds what it ran with and
+what it cost: turns, time, tokens, cost (``intelligence.turn``).
+``session_id`` is XO's session id; the session index maps it to the agent's
+own id, which is how outcomes are joined to decisions later.
+
+Writing never raises into a chat: a failure is logged and the line dropped.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from services.cowork_agent import project_layout
+from services.storage.atomic_write import append_jsonl
+from services.storage.layout import sessions_dir
+from services.storage.reader import read_jsonl_tail_reverse
+from services.timestamps import now_iso
+
+log = logging.getLogger(__name__)
+
+TYPE = "intelligence.decision"
+TURN_TYPE = "intelligence.turn"
+SCHEMA = 1
+SUBDIR = "intelligence"
+FILENAME = "decisions.jsonl"
+PREVIEW_CHARS = 160
+#: ``append_jsonl`` keeps a line whole only below the stream buffer (~8 KiB).
+MAX_LINE_BYTES = 7000
+
+
+def log_path(project: str | None) -> tuple[Path, dict[str, str]] | None:
+    """Where a session's decision goes, and the identity fields its line carries.
+
+    ``None`` when a project's runtime home cannot be resolved safely.
+    """
+    if not project:
+        return sessions_dir() / SUBDIR / FILENAME, {}
+    identity: dict[str, str] = {}
+    meta = project_layout.load_project(project) or {}
+    if meta.get("pid") and not meta.get("_template"):
+        identity["pid"] = str(meta["pid"])
+    identity["project_id"] = project
+    root = project_layout.runtime_dir_for_project(project, create=True)
+    if root is None:
+        # The project folder is not there yet (the adapter creates it when it
+        # starts the agent). Use the home keyed by its name, which
+        # project_layout folds into the pid-keyed one once the pid exists.
+        try:
+            root = project_layout.runtime_dir(project_layout.runtime_key(project))
+        except ValueError:
+            log.warning("intelligence: no safe runtime home for project %r; decision not logged", project)
+            return None
+    return root / SUBDIR / FILENAME, identity
+
+
+def existing_path(project: str | None) -> Path | None:
+    """The log a project's decisions are in, for reading. Creates nothing."""
+    if not project:
+        return sessions_dir() / SUBDIR / FILENAME
+    root = project_layout.runtime_dir_for_project(project)
+    if root is None:
+        try:
+            root = project_layout.runtime_dir(project_layout.runtime_key(project))
+        except ValueError:
+            return None
+    return root / SUBDIR / FILENAME
+
+
+#: How far back a resumed turn looks for its session's decision.
+FIND_LIMIT = 2000
+
+
+def find(project: str | None, session_id: str) -> dict[str, Any] | None:
+    """The newest decision line for ``session_id``, or ``None``. Blocking I/O."""
+    path = existing_path(project)
+    if path is None or not path.is_file():
+        return None
+    for line in read_jsonl_tail_reverse(path, limit=FIND_LIMIT, types=frozenset({TYPE})):
+        if line.get("session_id") == session_id:
+            return line
+    return None
+
+
+def request_record(content: str) -> dict[str, Any]:
+    return {
+        "preview": content[:PREVIEW_CHARS],
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "chars": len(content),
+    }
+
+
+def build_line(
+    *,
+    identity: dict[str, str],
+    session_id: str | None,
+    runtime: str,
+    mode: str,
+    request: dict[str, Any],
+    profiles_sha256: str,
+    sage: dict[str, Any],
+    decision: dict[str, Any],
+    applied: dict[str, Any],
+    latency_ms: float,
+    correction: dict[str, Any] | None = None,
+    recalibrate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """``correction`` / ``recalibrate``: what the past record would change
+    (``recalibrate.py``); each left out when ``None``."""
+    line: dict[str, Any] = {"ts": now_iso(), "type": TYPE, "schema": SCHEMA, **identity}
+    line.update({
+        "session_id": session_id,
+        "runtime": runtime,
+        "mode": mode,
+        "request": request,
+        "profiles": {"sha256": profiles_sha256},
+        "sage": sage,
+        "decision": decision,
+        "applied": applied,
+        "latency_ms": latency_ms,
+    })
+    for name, value in (("correction", correction), ("recalibrate", recalibrate)):
+        if value is not None:
+            line[name] = value
+    if len(json.dumps(line).encode("utf-8")) > MAX_LINE_BYTES:
+        # Only a very long profile list gets here; its per-option
+        # probabilities are what can be dropped.
+        choice = (line.get("sage") or {}).get("choice")
+        if isinstance(choice, dict):
+            choice.pop("options", None)
+    return line
+
+
+def turn_line(
+    *,
+    identity: dict[str, str],
+    session_id: str | None,
+    runtime: str,
+    mode: str,
+    new_session: bool,
+    applied: dict[str, Any],
+    outcome: dict[str, Any] | None,
+    agent_error: bool,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One finished turn: the setup it ran with and what it cost.
+
+    ``outcome`` is the adapter's (see ``BaseAgentAdapter.stream``), ``None``
+    when the agent reported none (it crashed, or the turn was cut short).
+    ``context`` is what XO handed the agent this turn (kind, size, hash; never
+    the text), ``None`` when nothing was added.
+    """
+    line: dict[str, Any] = {"ts": now_iso(), "type": TURN_TYPE, "schema": SCHEMA, **identity}
+    line.update({
+        "session_id": session_id,
+        "runtime": runtime,
+        "mode": mode,
+        "new_session": new_session,
+        "applied": applied,
+        "outcome": outcome,
+        "agent_error": agent_error,
+        "context": context,
+    })
+    return line
+
+
+def _append(project: str | None, session_id: str | None, make_line) -> Path | None:
+    """Resolve the file, build the line with its identity, append. Never raises."""
+    try:
+        target = log_path(project)
+        if target is None:
+            return None
+        path, identity = target
+        line = make_line(identity)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        append_jsonl(path, [line])
+        return path
+    except Exception:  # noqa: BLE001 - a lost log line must never cost a reply
+        log.exception("intelligence: could not write to the decision log for session %s", session_id)
+        return None
+
+
+def record(project: str | None, **fields: Any) -> Path | None:
+    """Write one session's decision. Returns the file written, or ``None``.
+
+    ``fields`` are :func:`build_line`'s, less ``identity``, which comes from
+    the project. Blocking file I/O: call it from a worker thread.
+    """
+    return _append(project, fields.get("session_id"), lambda identity: build_line(identity=identity, **fields))
+
+
+def record_turn(project: str | None, **fields: Any) -> Path | None:
+    """Write one finished turn (:func:`turn_line`'s fields). Blocking file I/O."""
+    return _append(project, fields.get("session_id"), lambda identity: turn_line(identity=identity, **fields))
