@@ -16,6 +16,11 @@ from services.cowork_agent.project_layout import (
 from services.cowork_agent.engine import sessions_io as _session_index
 
 
+#: Longest stream-json line read from ``claude``. One event is one line, and a
+#: tool result carrying a screenshot or a large file runs to hundreds of KB;
+#: asyncio's 64 KiB default made reading it raise and end the turn early.
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
+
 # ── Module-level native session ID cache (session_key → native_session_id) ───
 
 _native_map: dict[str, str] = {}
@@ -485,6 +490,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 stderr=asyncio.subprocess.PIPE,
                 env=self._subprocess_env(),
                 cwd=effective_cwd,
+                limit=STREAM_LINE_LIMIT,
             )
 
             response_parts: list[str] = []
