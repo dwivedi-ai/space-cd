@@ -1,7 +1,9 @@
-"""The file map: each code file's areas, tagged once by Sage (plan step 6b).
+"""The file map: each code file's areas, tagged once (plan step 6b).
 
-For every tracked code file (tests excluded, as in the pilot) one Sage
-``tags`` call over the project's categories, given the file's path and an
+A file one area's path rules place (``categories.area_for_path``) is tagged
+with that area for free (``source: "path"``). Every other tracked code file
+(tests excluded, as in the pilot) gets one Sage ``tags`` call over the
+project's categories (``source: "sage"``), given the file's path and an
 outline: its docstring's first line and the names of its functions and
 classes, at most 320 characters. Never the file's contents. Each file keeps
 Sage's probability and verdict per area, with "not sure" (``null``) kept, so
@@ -12,6 +14,10 @@ are dropped, and a new category list re-tags everything. Indexing is capped at
 ``XO_CONTEXT_INDEX_MAX_FILES`` files per project (default 2,000), stops at the
 first ``402`` (balance), and saves as it goes, so a stopped run resumes where
 it left off. Kept at ``~/.quirq/projects/<key>/intelligence/file_map.json``.
+
+:func:`check` asks Sage about a sample of the rule-tagged files and counts how
+often it agrees, to show whether the rules can be trusted. It never changes
+the map.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +136,7 @@ class IndexRun:
     """What one indexing run did."""
 
     tagged: int = 0
+    by_path: int = 0  # of ``tagged``: placed by a path rule, no Sage call
     unchanged: int = 0
     dropped: int = 0
     failed: int = 0
@@ -170,8 +178,16 @@ async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: i
         report.skipped_over_cap = len(todo) - max(cap, 0)
         todo = todo[:max(cap, 0)]
 
-    question = tags_question(areas_doc["categories"])
     area_ids = {a["id"] for a in areas_doc["categories"]}
+    for path in todo:
+        ruled = categories_mod.area_for_path(path, areas_doc["categories"])
+        if ruled is not None:
+            files[path] = {"blob": blobs[path], "tags": {ruled: [1.0, True]}, "source": "path"}
+            report.tagged += 1
+            report.by_path += 1
+    todo = [p for p in todo if (files.get(p) or {}).get("blob") != blobs[p]]
+
+    question = tags_question(areas_doc["categories"])
     timeout = mode.sage_timeout_s()
     semaphore = asyncio.Semaphore(CONCURRENCY)
     stop = asyncio.Event()
@@ -200,6 +216,7 @@ async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: i
             "blob": blobs[path],
             "tags": {t["id"]: [t.get("probability"), t.get("applies")]
                      for t in items if isinstance(t, dict) and t.get("id") in area_ids},
+            "source": "sage",
         }
         report.tagged += 1
         report.units += 1
@@ -208,4 +225,60 @@ async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: i
 
     await asyncio.gather(*(tag(p) for p in todo))
     save()
+    return report
+
+
+#: Sage's probability for an area at or above which it counts as agreeing with a rule.
+AGREE_P = 0.5
+
+
+@dataclass
+class CheckRun:
+    """How often Sage agrees with the path rules on a sample of rule-tagged files."""
+
+    checked: int = 0
+    agreed: int = 0
+    units: int = 0
+    stopped: str | None = None
+    disagreements: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def check(repo: Path, areas_doc: dict[str, Any], target: Path, *, sample: int = 30, seed: int = 0) -> CheckRun:
+    """Ask Sage about up to ``sample`` rule-tagged files (1 unit each). Sage
+    agrees when it says the rule's area applies, or gives it at least
+    :data:`AGREE_P`. Read-only: the map is not changed."""
+    report = CheckRun()
+    files = load(target)["files"]
+    ruled = sorted(p for p, entry in files.items() if entry.get("source") == "path")
+    picked = random.Random(seed).sample(ruled, min(sample, len(ruled)))
+    question = tags_question(areas_doc["categories"])
+    area_ids = {a["id"] for a in areas_doc["categories"]}
+    timeout = mode.sage_timeout_s()
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+    stop = asyncio.Event()
+
+    async def ask(path: str) -> None:
+        async with semaphore:
+            if stop.is_set():
+                return
+            result = await client.decide(_content_for(repo, path), question, timeout=timeout)
+        if not result.ok:
+            if result.kind in ("balance", "not_configured", "auth"):
+                report.stopped = report.stopped or result.kind
+                stop.set()
+            return
+        rule = next(iter(files[path]["tags"]))
+        items = [t for t in (result.data.get("result") or {}).get("tags") or [] if isinstance(t, dict)]
+        said = next((t for t in items if t.get("id") == rule), {})
+        report.checked += 1
+        report.units += 1
+        if said.get("applies") is True or (said.get("probability") or 0) >= AGREE_P:
+            report.agreed += 1
+        else:
+            report.disagreements.append({"path": path, "rule": rule,
+                                         "sage": [t["id"] for t in items if t.get("applies") is True
+                                                  and t.get("id") in area_ids]})
+
+    await asyncio.gather(*(ask(p) for p in picked))
+    report.disagreements.sort(key=lambda d: d["path"])
     return report

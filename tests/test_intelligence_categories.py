@@ -59,6 +59,47 @@ class ParseTests(unittest.TestCase):
                 categories.parse(reply)
 
 
+class PathRuleTests(unittest.TestCase):
+    def listing(self, paths_by_area: dict) -> list[dict]:
+        items = areas()
+        for item in items:
+            if item["id"] in paths_by_area:
+                item["paths"] = paths_by_area[item["id"]]
+        return categories.validate(items)
+
+    def test_paths_are_kept_and_normalised(self) -> None:
+        listed = self.listing({"area_0": ["services/chat/", "./routers/chat.py", "ui/**/*.js"]})
+        self.assertEqual(listed[0]["paths"], ["services/chat/**", "routers/chat.py", "ui/**/*.js"])
+        self.assertNotIn("paths", listed[1])  # an area without rules has none
+
+    def test_unsafe_or_malformed_paths_are_rejected(self) -> None:
+        for bad in (["/etc/passwd"], ["../outside/**"], ["a/../b.py"], [""], "services/**", [3]):
+            with self.subTest(paths=bad), self.assertRaises(categories.CategoryError):
+                self.listing({"area_0": bad})
+
+    def test_the_most_specific_rule_wins(self) -> None:
+        listed = self.listing({
+            "area_0": ["services/**"],
+            "area_1": ["services/chat/**"],
+            "area_2": ["services/chat/router.py"],
+            "area_3": ["ui/*.js"],
+            "area_4": ["ui/app.js"],
+            "area_5": ["docs/**"], "area_6": ["docs/**"],
+        })
+        self.assertEqual(categories.area_for_path("services/storage/disk.py", listed), "area_0")
+        self.assertEqual(categories.area_for_path("services/chat/deep/stream.py", listed), "area_1")
+        self.assertEqual(categories.area_for_path("services/chat/router.py", listed), "area_2")
+        self.assertEqual(categories.area_for_path("ui/app.js", listed), "area_4")
+        self.assertEqual(categories.area_for_path("ui/theme.js", listed), "area_3")
+        self.assertIsNone(categories.area_for_path("ui/views/deep.js", listed))  # * stays in one folder
+        self.assertIsNone(categories.area_for_path("docs/readme.py", listed))  # a tie between areas
+        self.assertIsNone(categories.area_for_path("scripts/run.sh", listed))  # no rule at all
+
+    def test_the_prompt_asks_for_path_rules(self) -> None:
+        prompt = categories.draft_prompt(Path("/nowhere/repo"), ["a.py", "b/c.py"])
+        self.assertIn('"paths"', prompt)
+
+
 class _Repo(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()

@@ -131,6 +131,33 @@ class IndexTests(unittest.TestCase):
         with patch.dict(os.environ, {file_map.ENV_MAX_FILES: "1"}):
             self.assertEqual(self.index().tagged, 0)  # the one tagged file already fills the cap
 
+    def test_a_path_rule_tags_a_file_without_asking_sage(self) -> None:
+        ruled = {**AREAS, "categories": [{**AREAS["categories"][0], "paths": ["chat.py"]}, AREAS["categories"][1]]}
+        done = self.index(areas=ruled)
+        self.assertEqual((done.tagged, done.by_path, done.units), (2, 1, 1))
+        files = self.saved()["files"]
+        self.assertEqual(files["chat.py"], {"blob": files["chat.py"]["blob"], "tags": {"chat": [1.0, True]}, "source": "path"})
+        self.assertEqual(files["store.py"]["source"], "sage")
+        self.assertEqual(self.sent, ["File: store.py\nOutline: save"])
+
+    def test_the_check_compares_path_rules_with_sage(self) -> None:
+        ruled = {**AREAS, "categories": [{**AREAS["categories"][0], "paths": ["chat.py"]},
+                                         {**AREAS["categories"][1], "paths": ["store.py"]}]}
+        self.index(areas=ruled)
+        self.assertEqual(self.sent, [])  # every file placed by a rule
+        # Sage agrees on chat.py (chat applies) and not on store.py (it says chat, not storage).
+        self.answers = [sage_tags(0.9, 0.1), sage_tags(0.9, 0.1)]
+        with patch.object(file_map, "CONCURRENCY", 1):
+            async def fake_decide(content, question, *, timeout):
+                self.sent.append(content)
+                return self.answers.pop(0)
+            with patch.object(file_map.client, "decide", fake_decide):
+                checked = asyncio.run(file_map.check(self.repo, ruled, self.target, sample=5))
+        self.assertEqual((checked.checked, checked.agreed, checked.units, checked.stopped), (2, 1, 2, None))
+        self.assertEqual(checked.disagreements, [{"path": "store.py", "rule": "storage", "sage": ["chat"]}])
+        # The check never changes the map.
+        self.assertEqual(self.saved()["files"]["store.py"]["tags"], {"storage": [1.0, True]})
+
     def test_not_a_git_repo(self) -> None:
         plain = self.repo.parent / "plain"
         plain.mkdir()

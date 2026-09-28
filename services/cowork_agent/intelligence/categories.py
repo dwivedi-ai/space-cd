@@ -11,6 +11,11 @@ The list is drafted once by a one-off, tool-free agent run (the agent's
 ``~/.quirq/projects/<key>/intelligence/categories.json``, where a person may
 edit it. It is never redrafted unless asked. Only paths and the README
 excerpt go into the draft, never other file contents.
+
+Each area may carry **path rules** (``paths``: globs relative to the repo,
+``*`` within a folder, ``**`` across folders), drafted in the same run. The
+file map tags a file by rule when exactly one area's most specific rule
+matches it (:func:`area_for_path`), and asks Sage only about the rest.
 """
 
 from __future__ import annotations
@@ -43,6 +48,8 @@ _ID = re.compile(r"[a-z][a-z0-9_]{1,39}")
 _DESCRIPTION_MAX = 240
 _PROMPT_MAX_FILES = 1500
 _README_MAX_CHARS = 3000
+_PATHS_MAX = 80
+_PATH_MAX_CHARS = 200
 
 CODE_EXTENSIONS = frozenset({
     ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".go", ".rs",
@@ -118,7 +125,13 @@ def draft_prompt(repo: Path, files: list[str]) -> str:
         "belong to at least one area. Give each area a lowercase snake_case id and a one-line "
         "description saying what belongs in it and what does not, for example: "
         '"the chat prompt API and streaming replies; not per-agent adapter details".\n\n'
-        'Reply with JSON only, no prose: {"categories": [{"id": "...", "description": "..."}]}'
+        "Also give each area its path rules: globs relative to the repository root that cover the "
+        "files belonging to that area alone, such as a folder (\"services/chat/**\") or an exact "
+        "file (\"routers/chat.py\"). `*` matches within one folder, `**` across folders. Prefer "
+        "folders where a whole folder belongs to one area, and exact files where a folder is mixed. "
+        "Leave out a file that serves several areas; it will be judged separately.\n\n"
+        'Reply with JSON only, no prose: {"categories": [{"id": "...", "description": "...", '
+        '"paths": ["..."]}]}'
     )
 
 
@@ -152,8 +165,77 @@ def validate(items: list) -> list[dict[str, str]]:
         if not isinstance(description, str) or not description.strip():
             raise CategoryError(f"category {cid!r} has no description")
         seen.add(cid)
-        out.append({"id": cid, "description": description.strip()[:_DESCRIPTION_MAX]})
+        area = {"id": cid, "description": description.strip()[:_DESCRIPTION_MAX]}
+        if item.get("paths") is not None:
+            area["paths"] = _paths(cid, item["paths"])
+        out.append(area)
     return out
+
+
+def _paths(cid: str, paths: object) -> list[str]:
+    """An area's path rules, normalised. Raises :class:`CategoryError`."""
+    if not isinstance(paths, list) or len(paths) > _PATHS_MAX:
+        raise CategoryError(f"category {cid!r}: paths must be a list of at most {_PATHS_MAX} globs")
+    out: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str):
+            raise CategoryError(f"category {cid!r}: path rule {raw!r} is not text")
+        rule = raw.strip()
+        while rule.startswith("./"):
+            rule = rule[2:]
+        if rule.endswith("/"):
+            rule += "**"
+        if (not rule or len(rule) > _PATH_MAX_CHARS or rule.startswith("/")
+                or ".." in rule.split("/") or "\\" in rule):
+            raise CategoryError(f"category {cid!r}: path rule {raw!r} must be a relative glob inside the repo")
+        out.append(rule)
+    return list(dict.fromkeys(out))
+
+
+def _rule_regex(rule: str) -> re.Pattern[str]:
+    """``*`` within one folder, ``**`` across folders, ``?`` one character."""
+    parts: list[str] = []
+    i = 0
+    while i < len(rule):
+        if rule.startswith("**/", i):
+            parts.append("(?:.*/)?")
+            i += 3
+        elif rule.startswith("**", i):
+            parts.append(".*")
+            i += 2
+        elif rule[i] == "*":
+            parts.append("[^/]*")
+            i += 1
+        elif rule[i] == "?":
+            parts.append("[^/]")
+            i += 1
+        else:
+            parts.append(re.escape(rule[i]))
+            i += 1
+    return re.compile("".join(parts) + r"\Z")
+
+
+def _specificity(rule: str) -> tuple[int, int]:
+    """An exact path beats any glob; then the longer literal prefix wins."""
+    wild = min((i for i, c in enumerate(rule) if c in "*?"), default=None)
+    return (1, len(rule)) if wild is None else (0, wild)
+
+
+def area_for_path(path: str, areas: list[dict[str, Any]]) -> str | None:
+    """The one area whose most specific path rule matches ``path``, or
+    ``None`` when no rule matches or two areas tie."""
+    best: tuple[int, int] | None = None
+    winners: set[str] = set()
+    for area in areas:
+        for rule in area.get("paths") or ():
+            if not _rule_regex(rule).match(path):
+                continue
+            score = _specificity(rule)
+            if best is None or score > best:
+                best, winners = score, {area["id"]}
+            elif score == best:
+                winners.add(area["id"])
+    return next(iter(winners)) if len(winners) == 1 else None
 
 
 def path_for(project: str) -> Path | None:
