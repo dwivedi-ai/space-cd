@@ -1,19 +1,25 @@
 """Where to look: a short, confident list of the files a new request most
 likely needs (plan step 6d).
 
-From the project's file map (6b) and the request's areas (6c):
+From the project's file map (6b), with no decision-model call, so it is ready
+on the first turn:
 
-1. **Shortlist** the files tagged with one of the request's confident areas;
-   a file Sage was unsure about for that area stays in rather than being
-   wrongly excluded.
-2. **Rank** them by how well the request's words match each file's path and
-   outline (BM25, word statistics from the whole map), plus up to
-   :data:`PAST_CAP` for past sessions in the same areas that edited the file
-   (the watcher's per-session stats, joined through the session index).
+1. **Rank** every mapped file by how well the request's words match its path
+   and outline (BM25, word statistics from the whole map).
+2. **Areas** are read off the front-runners' own tags (:func:`areas_of`), and
+   past sessions in those areas that edited a file add up to
+   :data:`PAST_CAP` (the watcher's per-session stats, joined through the
+   session index and the decision lines' ``areas``).
 3. **Only when sure:** hand over at most :data:`MAX_FILES` files, and only
    when some file matches and, among more than :data:`MAX_FILES` matches, the
    top file scores at least :data:`MIN_LEAD` times the next-best outside the
    list. Otherwise nothing is sent and :attr:`Handover.record` says why.
+
+Words-only on purpose: on 12 real space-cd commits it named a changed file as
+often as ranking within Sage's request areas (8 of 9 notes vs 8 of 10), while
+the areas call took a median 10 s against the first turn's 2 s deadline. The
+request's Sage areas (6c) still go to the decision line, for the log and
+recalibration.
 
 The text stays under :data:`TEXT_MAX` characters and says it is a starting
 point, not a constraint. It never includes file contents.
@@ -137,11 +143,12 @@ def past_edits(project: str, areas: set[str]) -> Counter:
 
 def _text(areas: list[str], top: list[str], also: list[str]) -> str:
     labels = [a.replace("_", " ") for a in areas]
-    names = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+    names = "" if not labels else labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+    lead = f"the request looks like work in {names}. " if names else ""
 
     def compose(paths: list[str], extra: list[str]) -> str:
-        text = (f"XO Space, from this project's map (a starting point, not a constraint): the request looks like "
-                f"work in {names}. Files most likely to matter: " + ", ".join(f"`{p}`" for p in paths) + ".")
+        text = ("XO Space, from this project's map (a starting point, not a constraint): " + lead
+                + "Files most likely to matter: " + ", ".join(f"`{p}`" for p in paths) + ".")
         if extra:
             text += " Similar past work in these areas also edited " + ", ".join(f"`{p}`" for p in extra) + "."
         return text
@@ -157,6 +164,16 @@ def _text(areas: list[str], top: list[str], also: list[str]) -> str:
     return text[:TEXT_MAX]
 
 
+def areas_of(paths: list[str], files: dict[str, dict[str, Any]], limit: int = 2) -> list[str]:
+    """The areas the given files are tagged with most, as their tags say (no Sage call)."""
+    counts: Counter = Counter()
+    for path in paths:
+        for area, value in ((files.get(path) or {}).get("tags") or {}).items():
+            if isinstance(value, list) and len(value) >= 2 and value[1] is True:
+                counts[area] += 1
+    return [area for area, _n in counts.most_common(limit)]
+
+
 def _withheld(reason: str, areas: list[str] | None = None) -> Handover:
     record: dict[str, Any] = {"kind": KIND, "withheld": reason}
     if areas:
@@ -164,27 +181,27 @@ def _withheld(reason: str, areas: list[str] | None = None) -> Handover:
     return Handover(text=None, record=record)
 
 
-def build(project: str | None, request: str, areas: dict[str, Any] | None) -> Handover:
+def build(project: str | None, request: str) -> Handover:
     """What to hand the agent for a new request, or why nothing. Blocking I/O; never raises."""
     try:
-        confident = request_areas.confident(areas)
-        if not confident:
-            return _withheld("no confident area")
         target = file_map.path_for(project) if project else None
         files = file_map.load(target)["files"] if target is not None and target.is_file() else {}
         if not files:
-            return _withheld("project not indexed", confident)
-        past = past_edits(project, set(confident))
-        positive = [(p, s) for p, s in rank(request, confident, files, past) if s > 0]
-        if not positive:
-            return _withheld("no file matches the request", confident)
+            return _withheld("project not indexed")
+        every = sorted({area for entry in files.values() for area in (entry.get("tags") or {})})
+        first = [(p, s) for p, s in rank(request, every, files, Counter()) if s > 0]
+        if not first:
+            return _withheld("no file matches the request")
+        areas = areas_of([p for p, _s in first[:MAX_FILES]], files)
+        past = past_edits(project, set(areas))
+        positive = [(p, s) for p, s in rank(request, every, files, past) if s > 0]
         if len(positive) > MAX_FILES and positive[0][1] < MIN_LEAD * positive[MAX_FILES][1]:
-            return _withheld("no file stands out", confident)
+            return _withheld("no file stands out", areas)
         top = [p for p, _s in positive[:MAX_FILES]]
         also = [p for p, _n in past.most_common() if p not in top and p in files][:2]
-        text = _text(confident, top, also)
+        text = _text(areas, top, also)
         shown = [p for p in top if f"`{p}`" in text]
-        return Handover(text=text, record={"kind": KIND, "areas": confident, "files": shown,
+        return Handover(text=text, record={"kind": KIND, "areas": areas, "files": shown,
                                            "also_edited": [p for p in also if f"`{p}`" in text]})
     except Exception:  # noqa: BLE001 - the reply matters more than the hand-over
         log.exception("intelligence: where to look failed for project %s", project)

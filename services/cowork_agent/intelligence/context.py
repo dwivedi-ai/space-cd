@@ -12,10 +12,10 @@ intelligence profiles:
 - ``note``: a fixed, harmless note on every turn that proves the channel end
   to end (plan step 5).
 - ``map``: "where to look" (plan step 6d) on a new session's first turn, in an
-  indexed project: the request's confident areas and at most five files
-  (``where_to_look.py``), only when sure. The first turn waits for the
-  request's areas no longer than routing's own deadline; late means nothing
-  is sent. Later turns add nothing: the note stays in the session's history.
+  indexed project: at most five files ranked by the request's words, and the
+  areas they belong to (``where_to_look.py``), only when sure. No decision
+  model is asked, so nothing waits. Later turns add nothing: the note stays
+  in the session's history.
 
 The turn line logs the context's kind, size and hash (never the text), and
 for ``map`` the areas and files handed over, or why nothing was.
@@ -26,11 +26,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
-from services.cowork_agent.intelligence import classify, decisions, mode, profiles, where_to_look
+from services.cowork_agent.intelligence import classify, mode, profiles, request_areas, where_to_look
 
 log = logging.getLogger(__name__)
 
@@ -63,20 +62,13 @@ async def turn_context(stream_info: dict) -> TurnContext:
 
 
 async def _where_to_look(stream_info: dict) -> TurnContext:
-    pending = stream_info.get("intelligence_decision")
-    if not stream_info.get("is_new_session") or pending is None or pending.areas is None:
+    project = stream_info.get("agent_id")
+    if not stream_info.get("is_new_session") or not project:
         return TurnContext()
-    remaining = max(0.0, decisions.ON_WAIT_S - (time.monotonic() - pending.started))
-    try:
-        found = await asyncio.wait_for(asyncio.shield(pending.areas), timeout=remaining)
-    except asyncio.TimeoutError:
-        return TurnContext(None, {"kind": where_to_look.KIND, "withheld": "late"})
-    if found is None:
+    if await asyncio.to_thread(request_areas.indexed, project) is None:
         return TurnContext()  # the project is not indexed: no hand-over was expected
-    if found.get("areas") is None:
-        return TurnContext(None, {"kind": where_to_look.KIND, "withheld": f"no areas ({found.get('error')})"})
     request = classify.prepare_content(stream_info.get("question") or "")
-    handed = await asyncio.to_thread(where_to_look.build, stream_info.get("agent_id"), request, found["areas"])
+    handed = await asyncio.to_thread(where_to_look.build, project, request)
     if not handed.text:
         return TurnContext(None, handed.record)
     return TurnContext(handed.text, {**record(handed.text), **handed.record})

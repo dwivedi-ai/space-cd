@@ -17,7 +17,6 @@ import shlex
 import stat
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -62,73 +61,45 @@ class SwitchTests(unittest.TestCase):
         self.assertNotIn("hello", json.dumps(recorded))
 
 
-class _Pending:
-    """A new session's decision as the first turn sees it (decisions.PendingDecision)."""
-
-    def __init__(self, areas, started_ago: float = 0.0) -> None:
-        self.areas = areas
-        self.started = time.monotonic() - started_ago
-
-
-NEVER = object()  # the areas answer never arrives
-
-
 class MapTests(unittest.TestCase):
     """XO_INTELLIGENCE_CONTEXT=map: where to look on a new session's first turn."""
 
-    def turn(self, areas=None, *, new=True, handed=None, started_ago=0.0, decided=True):
-        """Run the first turn's context; ``areas`` is what the decision task resolved."""
+    def turn(self, *, new=True, handed=None, indexed=True, project="demo"):
         handed = handed or where_to_look.Handover(
             text="XO Space, from this project's map: `a.py`.",
             record={"kind": "map", "areas": ["chat"], "files": ["a.py"], "also_edited": []})
-
-        async def go():
-            future = asyncio.get_running_loop().create_future()
-            if areas is not NEVER:
-                future.set_result(areas)
-            info = {"agent_name": "sample_agent", "agent_id": "demo", "question": "fix the stream retry",
-                    "is_new_session": new,
-                    "intelligence_decision": _Pending(future, started_ago) if decided else None}
-            return await context.turn_context(info)
-
+        info = {"agent_name": "sample_agent", "agent_id": project, "question": "fix the stream retry",
+                "is_new_session": new}
         with patch.object(profiles, "load", return_value=CONFIG), \
              patch.dict(os.environ, {mode.ENV_CONTEXT: "map"}), \
+             patch.object(context.request_areas, "indexed", return_value={"categories": []} if indexed else None), \
              patch.object(where_to_look, "build", return_value=handed) as build:
-            out = asyncio.run(go())
+            out = asyncio.run(context.turn_context(info))
         self.build = build
         return out
 
     def test_a_confident_hand_over_is_sent_and_logged(self) -> None:
-        out = self.turn({"areas": {"chat": [0.95, True]}, "units": 1})
+        out = self.turn()
         self.assertEqual(out.text, "XO Space, from this project's map: `a.py`.")
         self.assertEqual((out.record["kind"], out.record["files"], out.record["areas"]), ("map", ["a.py"], ["chat"]))
         self.assertEqual(out.record["chars"], len(out.text))
         self.assertNotIn("XO Space", json.dumps(out.record))
-        self.build.assert_called_once_with("demo", "fix the stream retry", {"chat": [0.95, True]})
+        # Words only: no decision-model answer is waited for.
+        self.build.assert_called_once_with("demo", "fix the stream retry")
 
     def test_a_withheld_hand_over_sends_nothing_and_says_why(self) -> None:
-        withheld = where_to_look.Handover(text=None, record={"kind": "map", "withheld": "no confident area"})
-        out = self.turn({"areas": {}, "units": 1}, handed=withheld)
-        self.assertEqual((out.text, out.record), (None, {"kind": "map", "withheld": "no confident area"}))
-
-    def test_late_areas_mean_nothing_is_sent(self) -> None:
-        # Deciding started almost the whole deadline ago: the first turn waits the rest, then gives up.
-        started = time.monotonic()
-        out = self.turn(NEVER, started_ago=decisions.ON_WAIT_S - 0.05)
-        self.assertLess(time.monotonic() - started, 1.0)
-        self.assertEqual((out.text, out.record), (None, {"kind": "map", "withheld": "late"}))
+        withheld = where_to_look.Handover(text=None, record={"kind": "map", "withheld": "no file stands out"})
+        out = self.turn(handed=withheld)
+        self.assertEqual((out.text, out.record), (None, {"kind": "map", "withheld": "no file stands out"}))
 
     def test_a_project_that_is_not_indexed_adds_and_logs_nothing(self) -> None:
-        out = self.turn(None)
+        out = self.turn(indexed=False)
         self.assertEqual((out.text, out.record), (None, None))
+        self.build.assert_not_called()
 
-    def test_a_failed_areas_call_is_logged(self) -> None:
-        out = self.turn({"areas": None, "units": 0, "error": "balance"})
-        self.assertEqual(out.record, {"kind": "map", "withheld": "no areas (balance)"})
-
-    def test_later_turns_and_sessions_without_a_decision_add_nothing(self) -> None:
-        self.assertEqual(self.turn({"areas": {"chat": [0.95, True]}}, new=False).text, None)
-        self.assertEqual(self.turn(decided=False).text, None)
+    def test_later_turns_and_chats_without_a_project_add_nothing(self) -> None:
+        self.assertEqual(self.turn(new=False).text, None)
+        self.assertEqual(self.turn(project=None).text, None)
         self.build.assert_not_called()
 
 

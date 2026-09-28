@@ -36,7 +36,6 @@ FILES = {
     "services/engine/unsure.py": entry("chat_engine", "Stream retry helpers; retry_later", applies=None),
     "services/storage/disk.py": entry("storage", "Write files atomically; retry_write"),
 }
-CONFIDENT = {"chat_engine": [0.95, True], "storage": [0.2, False]}
 
 
 class RankTests(unittest.TestCase):
@@ -72,15 +71,15 @@ class _Project(unittest.TestCase):
         doc = categories.load("demo")
         file_map.path_for("demo").write_text(json.dumps({"schema": 1, "categories_ts": doc["ts"], "files": files}))
 
-    def build(self, text="the stream retry backoff is too short", areas=CONFIDENT):
-        return where_to_look.build("demo", text, areas)
+    def build(self, text="the stream retry backoff is too short"):
+        return where_to_look.build("demo", text)
 
 
 class BuildTests(_Project):
     def test_a_confident_hand_over(self) -> None:
         handed = self.build()
         self.assertEqual(handed.record["kind"], "map")
-        self.assertEqual(handed.record["areas"], ["chat_engine"])
+        self.assertEqual(handed.record["areas"][0], "chat_engine")
         self.assertEqual(handed.record["files"][0], "services/engine/retry.py")
         self.assertLessEqual(len(handed.record["files"]), where_to_look.MAX_FILES)
         self.assertIn("`services/engine/retry.py`", handed.text)
@@ -88,11 +87,12 @@ class BuildTests(_Project):
         self.assertIn("starting point, not a constraint", handed.text)
         self.assertLessEqual(len(handed.text), where_to_look.TEXT_MAX)
 
-    def test_withheld_without_a_confident_area(self) -> None:
-        handed = self.build(areas={"chat_engine": [0.7, True]})
-        self.assertIsNone(handed.text)
-        self.assertEqual(handed.record, {"kind": "map", "withheld": "no confident area"})
-        self.assertEqual(self.build(areas=None).record["withheld"], "no confident area")
+    def test_the_areas_come_from_the_files_own_tags(self) -> None:
+        # No decision model: the areas named are the ones the front-runners are tagged with.
+        self.assertEqual(where_to_look.areas_of(["services/engine/retry.py", "routers/chat.py",
+                                                 "services/storage/disk.py"], FILES), ["chat_engine", "storage"])
+        # A file only unsure for an area does not name it.
+        self.assertEqual(where_to_look.areas_of(["services/engine/unsure.py"], FILES), [])
 
     def test_withheld_when_no_file_matches(self) -> None:
         handed = self.build(text="rename the logo")
