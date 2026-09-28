@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from services.cowork_agent.engine import sessions_io
-from services.cowork_agent.intelligence import decision_log, labels, profiles
+from services.cowork_agent.intelligence import decision_log, feedback, labels, profiles
 from services.storage.layout import projects_dir, sessions_dir
 
 
@@ -88,6 +88,7 @@ def session_rows(since: str | None = None, *, limit: int | None = None) -> list[
     ``limit`` reads only the last ``limit`` lines of each log (recalibration
     reads the record this way on every new session)."""
     rows: list[dict[str, Any]] = []
+    answers = feedback.latest_answers()
     for path in log_files():
         files = _files_edited(path)
         by_session: dict[str, dict[str, Any]] = defaultdict(lambda: {"decision": None, "turns": []})
@@ -142,6 +143,7 @@ def session_rows(since: str | None = None, *, limit: int | None = None) -> list[
                 "files_edited": files.get(session_id),
                 "top_tier": top_tier,
                 "raised_by_request": raised,
+                "feedback": answers.get(session_id),
             })
     rows.sort(key=lambda r: r["started"] or "")
     labels.apply(rows)

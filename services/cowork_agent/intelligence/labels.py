@@ -15,6 +15,12 @@ change without rewriting history:
   writes no code (:func:`writes_code`).
 - ``right``: neither. Sessions without any finished turn get no label.
 
+A person's answer (``feedback``, from ``feedback.py``) outranks these
+guesses: "no" makes a session under-powered and "yes" right-sized. On the top
+tier an answer says less: "no" is right (nothing stronger to move to, and a
+failed task was not over-powered), and "yes" leaves the over-powered rule to
+decide, since a finished task does not show the top tier was needed.
+
 These labels are what recalibration (4b-2) counts per area.
 """
 
@@ -87,10 +93,17 @@ def label(row: dict[str, Any], limits: dict[str, dict[str, Any]]) -> tuple[str |
     if not row.get("turn_lines"):
         return None, []
     key = setup_key(row.get("applied"))
+    answer = row.get("feedback")
     if row.get("top_tier"):
+        if answer == "no":
+            return RIGHT, []
         turns = row.get("agent_turns") or 0
         if turns <= SHORT_TURNS and not row.get("failed_turns") and writes_code(row) is False:
             return OVER, [f"top tier for {turns:g} agent turn(s) on a request that writes no code"]
+        return RIGHT, []
+    if answer == "no":
+        return UNDER, ["the person said it did not complete the task"]
+    if answer == "yes":
         return RIGHT, []
     reasons: list[str] = []
     if row.get("failed_turns"):

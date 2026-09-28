@@ -62,6 +62,8 @@ const srcNote=new Map();         /* source id -> inline note after a save */
 const srcEditing=new Set();      /* source ids whose path row is in edit mode */
 let telemetryRebuild=null;       /* timer: quiet reload after a config change */
 const promptsCache=new Map();    /* session key -> session_prompts payload */
+const routingCache=new Map();    /* session key -> routing check: the layer it ran on + the latest answer */
+const routingBusy=new Set();     /* session keys with an answer being saved */
 /* Search belongs to the loaded table, not the charts or a selected transcript. */
 _toolbar=()=>sub==='sessions'&&!sel&&SD&&!loading&&!failed?{search:{
   placeholder:'Search loaded sessions…',
@@ -403,7 +405,10 @@ function rDetail(el){
       ['Primary model',s.model],['Started',dtfmt(s.started_at)],['Ended',dtfmt(s.ended_at)],
       ['Breakdown scope',s.subagents.length?'session tree, including listed sub-agents':'session only'],
       ...breakdownPairs,['Session id',s.id]])})
+    +'<div class="sess-stack">'
+    +card({title:'Routing check',description:'Your answer helps XO pick the right intelligence layer for chats like this',content:'<div id="sess-routing"><div class="sess-note">'+spinner()+' loading…</div></div>'})
     +card({title:'Token breakdown',description:breakdownKnown?'Share of classified tokens':'Breakdown '+breakdownStatus,content:'<div id="ch-breakdown"></div>'})
+    +'</div>'
     +'</div>'
     +'<div class="sess-grid2">'
     +card({title:'Tools',description:s.tools.reduce((a,x)=>a+x.calls,0)+' calls, top '+s.tools.length,content:toolTable(s.tools)})
@@ -416,6 +421,60 @@ function rDetail(el){
   const config={};parts.forEach(([key,label],i)=>{config[key]={label,color:CHART_COLORS[i%CHART_COLORS.length]};});
   donutChart(document.getElementById('ch-breakdown'),{data:parts.map(([key,,value])=>({key,value})),config,format:tok,center:{value:tok(t),label:'tokens'},height:230});
   renderPrompts(s);
+  renderRouting(s);
+}
+/* Routing check: which intelligence layer (model + effort) the session ran
+   on, and "did it complete your task?". Any session can be answered, routed
+   by XO or not; a routed session's answer feeds the routing feedback loop. */
+const MODEL_ID=/^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}$/;
+const routingPath=s=>API_BASE+'/api/intelligence/sessions/'+encodeURIComponent(agentOf(s))+'/'+encodeURIComponent(s.id);
+function renderRouting(s){
+  const host=document.getElementById('sess-routing');
+  if(!host)return;
+  const key=sessionKey(s);
+  const cached=routingCache.get(key);
+  if(cached){host.innerHTML=routingHtml(cached,s);wireRouting(host,s);return;}
+  apiFetch(routingPath(s)).then(res=>{
+    if(document.getElementById('sess-routing')!==host)return;
+    if(!res.ok){
+      host.innerHTML=note(res.status===404&&res.error==='Not Found'
+        ?'This server does not have the routing check yet — restart xo-space to pick it up.'
+        :'Could not load the routing check ('+esc(res.error||'error')+').');
+      return;
+    }
+    routingCache.set(key,res.data);
+    host.innerHTML=routingHtml(res.data,s);wireRouting(host,s);
+  });
+}
+function routingHtml(r,s){
+  const a=r.routed?r.applied:null;
+  const ran=a
+    ?'This chat ran on <strong>'+esc(a.profile||'the default layer')+'</strong> · '+esc(a.model||'the agent’s own model')
+      +(a.effort?', '+esc(a.effort)+' effort':'')+', chosen by Levanto Sage.'
+    :'This chat ran on <strong>'+esc(s.model||'an unknown model')+'</strong> (not routed).';
+  const busy=routingBusy.has(sessionKey(s));
+  const choice=(value,text)=>button(text,{variant:r.answer===value?'default':'outline',size:'sm',disabled:busy,
+    attrs:'data-routing-answer="'+value+'" aria-pressed="'+(r.answer===value)+'"'});
+  return'<div class="sess-routing">'
+    +'<p class="sess-routing-ran">'+ran+'</p>'
+    +'<div class="sess-routing-ask"><span>'+(a?'Did it still complete your task?':'Did it complete your task?')+'</span>'
+    +choice('yes','Yes')+choice('no','No')+(busy?spinner('Saving'):'')+'</div>'
+    +(r.answer?'<p class="sess-routing-done">Recorded: '+(r.answer==='yes'?'Yes':'No')+'. Choose again to change it.</p>':'')
+    +'</div>';
+}
+function wireRouting(host,s){
+  host.querySelectorAll('[data-routing-answer]').forEach(b=>b.addEventListener('click',()=>saveRouting(s,b.dataset.routingAnswer)));
+}
+async function saveRouting(s,answer){
+  const key=sessionKey(s);
+  if(routingBusy.has(key))return;
+  routingBusy.add(key);renderRouting(s);
+  const model=MODEL_ID.test(s.model||'')?s.model:null;
+  const res=await apiFetch(routingPath(s)+'/feedback',{method:'POST',body:{answer,model}});
+  routingBusy.delete(key);
+  if(res.ok){routingCache.set(key,res.data);toast('Answer recorded');}
+  else toast('Could not save the answer: '+(res.error||'error'));
+  renderRouting(s);
 }
 /* Prompt text is deliberately absent from the aggregate sessions.json payload;
    each detail view lazily pulls its own session's typed prompts and caches the

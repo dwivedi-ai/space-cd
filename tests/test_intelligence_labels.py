@@ -75,6 +75,21 @@ class LabelRuleTests(unittest.TestCase):
         self.assertIs(labels.writes_code({"tags": {"needs_code_writing": True}}), True)
         self.assertIsNone(labels.writes_code({"tags": {"needs_code_writing": None}}))
 
+    def test_the_persons_answer_outranks_the_guesses(self) -> None:
+        # "No" on a lighter layer: under, however quick and cheap it was.
+        self.assertEqual(self.label(row(feedback="no")),
+                         ("under", ["the person said it did not complete the task"]))
+        # "Yes": right-sized, even where the percentiles would have said under.
+        six = [row(turns=t, cost=0.05) for t in (1, 1, 1, 2, 2)] + [row(turns=30, cost=0.9, feedback="yes")]
+        self.assertEqual(self.label(six[-1], six), ("right", []))
+
+    def test_on_the_top_tier_an_answer_says_less(self) -> None:
+        short = {"turns": 1, "tags": {"needs_code_writing": False}, "top_tier": True}
+        # Nothing stronger to move to, and a failed task was not over-powered.
+        self.assertEqual(self.label(row(applied=DEFAULT, feedback="no", **short)), ("right", []))
+        # "Yes" says the task got done, not that the top tier was needed.
+        self.assertEqual(self.label(row(applied=DEFAULT, feedback="yes", **short))[0], "over")
+
     def test_the_top_tier_is_never_under(self) -> None:
         # Nothing stronger to move to: a long or failing top-tier session is hard work.
         six = [row(applied=DEFAULT, top_tier=True, turns=t) for t in (1, 2, 2, 3, 3)]
@@ -125,6 +140,18 @@ class ReportTests(unittest.TestCase):
         [r] = report.session_rows()
         self.assertTrue(r["raised_by_request"])
         self.assertEqual((r["label"], r["label_reasons"]), ("under", ["a later request raised the effort"]))
+
+    def test_a_persons_answer_is_joined_to_its_session(self) -> None:
+        self.session("s1", LIGHT, [(LIGHT, 1)])
+        self.session("s2", LIGHT, [(LIGHT, 1)])
+        answers = self.log.parent / "feedback.jsonl"
+        with answers.open("a") as f:
+            for xo_id, answer in (("s1", "yes"), ("s1", "no"), (None, "no")):
+                f.write(json.dumps({"ts": "2026-09-28T10:00:00Z", "type": "intelligence.feedback", "schema": 1,
+                                    "session_id": "native", "xo_session_id": xo_id, "answer": answer}) + "\n")
+        rows = {r["session_id"]: r for r in report.session_rows()}
+        self.assertEqual((rows["s1"]["feedback"], rows["s1"]["label"]), ("no", "under"))
+        self.assertEqual((rows["s2"]["feedback"], rows["s2"]["label"]), (None, "right"))
 
     def test_deep_and_default_are_the_top_tier(self) -> None:
         self.session("s1", DEEP, [(DEEP, 1)], code=False)
