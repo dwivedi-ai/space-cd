@@ -136,7 +136,8 @@ class IndexTests(unittest.TestCase):
         done = self.index(areas=ruled)
         self.assertEqual((done.tagged, done.by_path, done.units), (2, 1, 1))
         files = self.saved()["files"]
-        self.assertEqual(files["chat.py"], {"blob": files["chat.py"]["blob"], "tags": {"chat": [1.0, True]}, "source": "path"})
+        self.assertEqual(files["chat.py"], {"blob": files["chat.py"]["blob"], "tags": {"chat": [1.0, True]},
+                                            "source": "path", "outline": "Chat.; chat"})
         self.assertEqual(files["store.py"]["source"], "sage")
         self.assertEqual(self.sent, ["File: store.py\nOutline: save"])
 
@@ -157,6 +158,21 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(checked.disagreements, [{"path": "store.py", "rule": "storage", "sage": ["chat"]}])
         # The check never changes the map.
         self.assertEqual(self.saved()["files"]["store.py"]["tags"], {"storage": [1.0, True]})
+
+    def test_each_file_keeps_its_outline(self) -> None:
+        self.index()
+        self.assertEqual(self.saved()["files"]["chat.py"]["outline"], "Chat.; chat")
+
+    def test_a_missing_outline_is_filled_in_without_asking_sage(self) -> None:
+        self.index()
+        document = self.saved()
+        del document["files"]["chat.py"]["outline"]  # a map written before outlines were kept
+        self.target.write_text(json.dumps(document))
+        self.sent.clear()
+        done = self.index()
+        self.assertEqual((done.tagged, done.units), (0, 0))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.saved()["files"]["chat.py"]["outline"], "Chat.; chat")
 
     def test_not_a_git_repo(self) -> None:
         plain = self.repo.parent / "plain"

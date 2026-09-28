@@ -146,13 +146,17 @@ class IndexRun:
     errors: list[str] = field(default_factory=list)
 
 
-def _content_for(repo: Path, path: str) -> str:
+def _outline_of(repo: Path, path: str) -> str:
     try:
         with open(repo / path, "rb") as f:
             text = f.read(_READ_MAX_BYTES).decode("utf-8", errors="replace")
     except OSError:
         text = ""
-    return f"File: {path}\nOutline: {outline(text, path)}"
+    return outline(text, path)
+
+
+def _content_for(repo: Path, path: str) -> str:
+    return f"File: {path}\nOutline: {_outline_of(repo, path)}"
 
 
 async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: int | None = None) -> IndexRun:
@@ -178,11 +182,17 @@ async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: i
         report.skipped_over_cap = len(todo) - max(cap, 0)
         todo = todo[:max(cap, 0)]
 
+    # Outlines feed the "where to look" ranking; a map from before they were
+    # kept gets them from the files, with no re-tagging.
+    for path, entry in files.items():
+        if "outline" not in entry:
+            entry["outline"] = _outline_of(repo, path)
     area_ids = {a["id"] for a in areas_doc["categories"]}
     for path in todo:
         ruled = categories_mod.area_for_path(path, areas_doc["categories"])
         if ruled is not None:
-            files[path] = {"blob": blobs[path], "tags": {ruled: [1.0, True]}, "source": "path"}
+            files[path] = {"blob": blobs[path], "tags": {ruled: [1.0, True]}, "source": "path",
+                           "outline": _outline_of(repo, path)}
             report.tagged += 1
             report.by_path += 1
     todo = [p for p in todo if (files.get(p) or {}).get("blob") != blobs[p]]
@@ -217,6 +227,7 @@ async def index(repo: Path, areas_doc: dict[str, Any], target: Path, *, limit: i
             "tags": {t["id"]: [t.get("probability"), t.get("applies")]
                      for t in items if isinstance(t, dict) and t.get("id") in area_ids},
             "source": "sage",
+            "outline": _outline_of(repo, path),
         }
         report.tagged += 1
         report.units += 1

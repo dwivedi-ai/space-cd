@@ -153,6 +153,20 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((rows["s1"]["feedback"], rows["s1"]["label"]), ("no", "under"))
         self.assertEqual((rows["s2"]["feedback"], rows["s2"]["label"]), (None, "right"))
 
+    def test_what_the_first_turn_was_handed_is_on_the_row(self) -> None:
+        for sid, context in (("s1", {"kind": "map", "areas": ["chat"], "files": ["a.py", "b.py"], "chars": 90}),
+                             ("s2", {"kind": "map", "withheld": "late"}),
+                             ("s3", {"kind": "note", "chars": 40}),
+                             ("s4", None)):
+            self.write({"ts": "2026-09-28T10:00:00Z", "type": "intelligence.turn", "schema": 1, "session_id": sid,
+                        "runtime": "claude_code", "new_session": True, "applied": LIGHT, "agent_error": False,
+                        "outcome": {"turns": 1, "cost_usd": 0.02}, "context": context})
+        rows = {r["session_id"]: r for r in report.session_rows()}
+        self.assertEqual(rows["s1"]["handed_over"]["files"], ["a.py", "b.py"])
+        self.assertEqual(rows["s2"]["handed_over"], {"kind": "map", "withheld": "late"})
+        self.assertIsNone(rows["s3"]["handed_over"])  # the step 5 test note is not a hand-over
+        self.assertIsNone(rows["s4"]["handed_over"])
+
     def test_deep_and_default_are_the_top_tier(self) -> None:
         self.session("s1", DEEP, [(DEEP, 1)], code=False)
         self.session("s2", DEFAULT, [(DEFAULT, 1)], code=False)

@@ -158,9 +158,9 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
     selection = await intelligence_decisions.turn_selection(stream_info)
     extra = {"intelligence": selection} if selection else {}
     # What XO hands the agent this turn beside the user's message (XO_INTELLIGENCE_CONTEXT).
-    context = intelligence_context.turn_context(stream_info)
-    if context:
-        extra["context"] = context
+    turn_context = await intelligence_context.turn_context(stream_info)
+    if turn_context.text:
+        extra["context"] = turn_context.text
 
     async def _produce():
         try:
@@ -218,7 +218,7 @@ async def _dispatcher_sse(stream_info: dict, _session_id_out: list | None = None
 
     # What the turn ran with and cost, logged in the background (shadow / on only).
     intelligence_outcomes.after_turn(stream_info, selection, final_event, agent_error=agent_error,
-                                     context=intelligence_context.record(context))
+                                     context=turn_context.record)
 
     resolved_session_id = our_session_id or final_native_session_id
     if _session_id_out is not None:

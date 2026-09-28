@@ -129,7 +129,8 @@ def session_rows(since: str | None = None, *, limit: int | None = None) -> list[
                 "tag_p": {k: v.get("p") for k, v in (sage.get("tags") or {}).items() if isinstance(v, dict)},
                 "areas": (decision or {}).get("areas"),
                 "correction": (decision or {}).get("correction"),
-                "sage_units": sage.get("units"),
+                "sage_units": (sage.get("units") or 0) + ((decision or {}).get("areas_call") or {}).get("units", 0)
+                              if sage.get("units") is not None else None,
                 "sage_errors": [e.get("kind") for e in sage.get("errors") or []],
                 "applied": applied,
                 "turn_lines": len(turns),
@@ -144,6 +145,10 @@ def session_rows(since: str | None = None, *, limit: int | None = None) -> list[
                 "top_tier": top_tier,
                 "raised_by_request": raised,
                 "feedback": answers.get(session_id),
+                # "Where to look" (6d): what the first turn was handed, or why nothing.
+                "handed_over": next((t["context"] for t in turns if t.get("new_session")
+                                     and isinstance(t.get("context"), dict) and t["context"].get("kind") == "map"),
+                                    None),
             })
     rows.sort(key=lambda r: r["started"] or "")
     labels.apply(rows)

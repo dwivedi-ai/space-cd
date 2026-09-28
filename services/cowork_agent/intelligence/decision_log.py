@@ -115,9 +115,13 @@ def build_line(
     latency_ms: float,
     correction: dict[str, Any] | None = None,
     recalibrate: dict[str, Any] | None = None,
+    areas: dict[str, Any] | None = None,
+    areas_call: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``correction`` / ``recalibrate``: what the past record would change
-    (``recalibrate.py``); each left out when ``None``."""
+    (``recalibrate.py``). ``areas``: the request's areas in an indexed project
+    (``request_areas.py``), with ``areas_call`` saying what asking cost or why
+    it failed. Each is left out when ``None``."""
     line: dict[str, Any] = {"ts": now_iso(), "type": TYPE, "schema": SCHEMA, **identity}
     line.update({
         "session_id": session_id,
@@ -130,7 +134,8 @@ def build_line(
         "applied": applied,
         "latency_ms": latency_ms,
     })
-    for name, value in (("correction", correction), ("recalibrate", recalibrate)):
+    for name, value in (("correction", correction), ("recalibrate", recalibrate),
+                        ("areas", areas), ("areas_call", areas_call)):
         if value is not None:
             line[name] = value
     if len(json.dumps(line).encode("utf-8")) > MAX_LINE_BYTES:

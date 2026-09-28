@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from services.cowork_agent.engine import sessions_io
-from services.cowork_agent.intelligence import classify, decision_log, mode, profiles, recalibrate, selection
+from services.cowork_agent.intelligence import classify, decision_log, mode, profiles, recalibrate, request_areas, selection
 
 log = logging.getLogger(__name__)
 
@@ -52,11 +52,16 @@ class PendingDecision:
 
     ``setup`` resolves to the :class:`selection.Selection` the first turn runs
     with, by the ``on`` deadline at the latest (``None`` if deciding failed);
-    ``task`` finishes once the decision is logged.
+    ``task`` finishes once the decision is logged. In a project, ``areas``
+    resolves to the request's areas (``request_areas.ask``'s record), or
+    ``None`` when the project is not indexed; ``started`` is when deciding
+    began (``time.monotonic``), which the first turn's deadlines count from.
     """
 
     task: asyncio.Task
     setup: asyncio.Future
+    areas: asyncio.Future | None = None
+    started: float = 0.0
 
 
 def start(
@@ -80,13 +85,15 @@ def start(
     except RuntimeError:  # no running loop: nothing to decide on
         return None
     setup = loop.create_future()
+    areas = loop.create_future() if project else None
+    started = time.monotonic()
     task = loop.create_task(
-        _decide(config, current, agent_name, text, session_id, project, request, setup),
+        _decide(config, current, agent_name, text, session_id, project, request, setup, areas),
         name=f"intelligence-decision-{session_id}",
     )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
-    return PendingDecision(task=task, setup=setup)
+    return PendingDecision(task=task, setup=setup, areas=areas, started=started)
 
 
 def decided_setup(config: profiles.IntelligenceConfig, decision: classify.Decision) -> profiles.Setup:
@@ -118,10 +125,14 @@ async def _decide(
     project: str | None,
     request: selection.RequestChoice | None,
     setup: asyncio.Future | None = None,
+    areas: asyncio.Future | None = None,
 ) -> classify.Decision | None:
     started = time.perf_counter()
     try:
         content = classify.prepare_content(text)
+        # The request's areas (6c), asked at the same moment, in indexed projects only.
+        asking_areas = (asyncio.ensure_future(_request_areas(project, content, areas))
+                        if areas is not None else None)
         choice_ready = asyncio.get_running_loop().create_future()
         deciding = asyncio.ensure_future(classify.classify(
             config, content, timeout=mode.sage_timeout_s(), choice_ready=choice_ready))
@@ -141,11 +152,13 @@ async def _decide(
         _resolve(setup, applied)
 
         decision = await deciding
+        found_areas = await asking_areas if asking_areas is not None else None
         setup_decided = decided_setup(config, decision)
         # After the setup is resolved, so the past record never delays a reply.
         recalibration = await asyncio.to_thread(
             recalibrate.evaluate, config, project=project, session_id=session_id,
             profile=decision.profile, sage=decision.sage, request=request,
+            areas=(found_areas or {}).get("areas"),
         )
         await asyncio.to_thread(
             decision_log.record,
@@ -161,6 +174,8 @@ async def _decide(
                       "model": setup_decided.model, "effort": setup_decided.effort},
             applied=applied.as_kwargs(),
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
+            areas=(found_areas or {}).get("areas"),
+            areas_call=({k: v for k, v in found_areas.items() if k != "areas"} if found_areas else None),
             **recalibration,
         )
         return decision
@@ -171,6 +186,21 @@ async def _decide(
         return None
     finally:
         _resolve(setup, None)
+        _resolve(areas, None)
+
+
+async def _request_areas(project: str | None, content: str, future: asyncio.Future | None) -> dict[str, Any] | None:
+    """Ask for the request's areas when the project is indexed; resolve
+    ``future`` with the answer (or ``None``) as soon as it is known. Never raises."""
+    found = None
+    try:
+        document = await asyncio.to_thread(request_areas.indexed, project)
+        if document is not None:
+            found = await request_areas.ask(content, document, timeout=mode.sage_timeout_s())
+    except Exception:  # noqa: BLE001 - missing areas only cost the hand-over
+        log.exception("intelligence: request areas for project %s failed", project)
+    _resolve(future, found)
+    return found
 
 
 def _session_project(session_id: str) -> tuple[bool, str | None]:
