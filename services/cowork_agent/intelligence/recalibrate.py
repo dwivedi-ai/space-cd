@@ -5,10 +5,12 @@ kind should route differently. Here, when a new session is decided:
 
 1. Its **key** says what kind of request it is: its primary area (the
    confident area with the highest probability, once requests are tagged with
-   the project's areas), else whether Sage said it writes code: ``code=1`` or
-   ``code=0``. Only that fact: Sage is most accurate on it and rarely unsure,
-   while its "not sure" on the other facts split sessions into groups too
-   small to act on. No key when Sage was unsure whether it writes code.
+   the project's areas), else whether the request writes code: ``code=1`` when
+   Sage's probability for it is at least ``labels.CODE_P``, else ``code=0``. Only
+   that fact, and its probability rather than Sage's yes/no/unsure answer:
+   Sage is often unsure whether a question *about* code writes code, and an
+   unsure answer left the session out of every group. Lines without a
+   probability fall back to the answer; no key when neither is there.
 2. The **evidence** is the earlier finished sessions in the same log (the
    project's, or the no-project log) with the same key that ran on the same
    setup as the one decided now: the picked profile, or the default. Each is
@@ -17,8 +19,8 @@ kind should route differently. Here, when a new session is decided:
 3. The **rule**: with at least :data:`MIN_EVIDENCE` such sessions, where at
    least :data:`MIN_RATE` of them were under-powered, move one tier up the
    agent's ``tiers`` ladder; where as many were over-powered, one tier down.
-   The default sits above the ladder's top; a profile off the ladder is never
-   moved. The strongest setup is never labelled under, so it never goes up.
+   The default sits above the ladder's top, or at ``default_tier`` when the
+   config names one; a profile off the ladder is never moved. The strongest setup is never labelled under, so it never goes up.
 
 Switched by ``XO_INTELLIGENCE_RECALIBRATE`` (``mode.py``). Step 4b-2 only
 logs: the decision line gets a ``correction`` (``applied: false``) when the
@@ -49,8 +51,9 @@ DOWN = "down"
 def key(row: dict[str, Any]) -> str | None:
     """What kind of request a session was, for matching it to past ones.
 
-    ``row`` is shaped like a report row: ``tags`` maps each fact to Sage's
-    ``applies``, ``areas`` (optional) maps an area to ``[p, applies]``.
+    ``row`` is shaped like a report row: ``tag_p`` maps each fact to Sage's
+    probability and ``tags`` to its ``applies``; ``areas`` (optional) maps an
+    area to ``[p, applies]``.
     """
     areas = row.get("areas")
     if isinstance(areas, dict):
@@ -61,10 +64,8 @@ def key(row: dict[str, Any]) -> str | None:
         ]
         if confident:
             return f"area={max(confident)[1]}"
-    code = (row.get("tags") or {}).get("needs_code_writing")
-    if not isinstance(code, bool):
-        return None
-    return f"code={int(code)}"
+    code = labels.writes_code(row)
+    return None if code is None else f"code={int(code)}"
 
 
 _key_of = key  # ``rule`` takes a ``key`` argument, which hides the function
@@ -77,7 +78,12 @@ def neighbour(config: profiles.IntelligenceConfig, profile: str | None, directio
     if not tiers:
         return None
     if profile is None:
-        return tiers[-1] if direction == DOWN else None
+        if direction == UP:
+            return None
+        if config.default_tier in tiers:
+            index = tiers.index(config.default_tier) - 1
+            return tiers[index] if index >= 0 else None
+        return tiers[-1]
     if profile not in tiers:
         return None
     index = tiers.index(profile) + (1 if direction == UP else -1)
@@ -131,8 +137,9 @@ def evaluate(
     try:
         if request is not None and not request.empty:
             return {"recalibrate": {"mode": current, "result": "request"}}
-        tags = {k: v.get("applies") for k, v in ((sage or {}).get("tags") or {}).items() if isinstance(v, dict)}
-        request_key = key({"tags": tags, "areas": areas})
+        facts = {k: v for k, v in ((sage or {}).get("tags") or {}).items() if isinstance(v, dict)}
+        request_key = key({"tags": {k: v.get("applies") for k, v in facts.items()},
+                           "tag_p": {k: v.get("p") for k, v in facts.items()}, "areas": areas})
         past = []
         if request_key is not None:
             past = [

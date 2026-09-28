@@ -2,7 +2,8 @@
 
 Under: failed turns, a later request that raised the effort, or (once a setup
 has 5+ sessions) more turns or cost than 80% of that setup's sessions. Over:
-the top tier for one agent turn on a request that writes no code. Labels are
+the top tier for at most 2 agent turns, none failed, on a request that writes
+no code (by Sage's probability when there is one). Labels are
 computed when the log is read, so the rules can change without rewriting it.
 """
 
@@ -58,9 +59,21 @@ class LabelRuleTests(unittest.TestCase):
         trivial = {"turns": 1, "tags": {"needs_code_writing": False}, "top_tier": True}
         self.assertEqual(self.label(row(applied=DEFAULT, **trivial))[0], "over")
         self.assertEqual(self.label(row(applied=DEEP, **trivial))[0], "over")
-        # Not when Sage was unsure whether it writes code, or it took more turns.
+        # Two turns is still short.
+        self.assertEqual(self.label(row(applied=DEFAULT, **{**trivial, "turns": 2}))[0], "over")
+        # Not when Sage was unsure whether it writes code, it took more turns, or a turn failed.
         self.assertEqual(self.label(row(applied=DEFAULT, **{**trivial, "tags": {"needs_code_writing": None}}))[0], "right")
         self.assertEqual(self.label(row(applied=DEFAULT, **{**trivial, "turns": 3}))[0], "right")
+        self.assertEqual(self.label(row(applied=DEFAULT, failed=1, **trivial))[0], "right")
+
+    def test_sages_probability_decides_whether_it_writes_code(self) -> None:
+        # "Not sure" as a yes/no, but the probability still answers.
+        unsure = {"turns": 1, "top_tier": True, "tags": {"needs_code_writing": None}}
+        self.assertEqual(self.label(row(applied=DEFAULT, tag_p={"needs_code_writing": 0.42}, **unsure))[0], "over")
+        self.assertEqual(self.label(row(applied=DEFAULT, tag_p={"needs_code_writing": 0.72}, **unsure))[0], "right")
+        self.assertIs(labels.writes_code({"tags": {"needs_code_writing": True}, "tag_p": {"needs_code_writing": 0.1}}), False)
+        self.assertIs(labels.writes_code({"tags": {"needs_code_writing": True}}), True)
+        self.assertIsNone(labels.writes_code({"tags": {"needs_code_writing": None}}))
 
     def test_the_top_tier_is_never_under(self) -> None:
         # Nothing stronger to move to: a long or failing top-tier session is hard work.
@@ -96,7 +109,7 @@ class ReportTests(unittest.TestCase):
     def session(self, sid, applied, turns, *, code=True):
         decision = {"ts": "2026-09-24T10:00:00Z", "type": "intelligence.decision", "schema": 1,
                     "session_id": sid, "runtime": "claude_code", "mode": "on",
-                    "sage": {"tags": {"needs_code_writing": {"p": 0.9, "applies": code}}},
+                    "sage": {"tags": {"needs_code_writing": {"p": 0.9 if code else 0.1, "applies": code}}},
                     "decision": {"profile": applied.get("profile"), "reason": "sage_choice"}, "applied": applied}
         lines = [decision]
         for i, (turn_applied, agent_turns) in enumerate(turns):

@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 from services.cowork_agent.intelligence import classify, decisions, mode, profiles, recalibrate, report, selection
 
-CONFIG = profiles.parse({
+DOCUMENT = {
     "schema": 1,
     "default": {"model": None, "effort": None},
     "efforts": ["low", "medium", "high"],
@@ -34,7 +34,8 @@ CONFIG = profiles.parse({
         {"id": "deep", "model": "claude-opus-5-5", "effort": "high", "use_when": "big work"},
         {"id": "research", "model": "claude-sonnet-5", "effort": "medium", "use_when": "outside info"},
     ],
-}, sha256="cfg-sha")
+}
+CONFIG = profiles.parse(DOCUMENT, sha256="cfg-sha")
 
 CODE_TAGS = {"needs_code_writing": {"p": 0.9, "applies": True},
              "needs_search": {"p": 0.2, "applies": False},
@@ -104,6 +105,21 @@ class TierTests(unittest.TestCase):
         # A profile off the ladder is never moved.
         self.assertIsNone(recalibrate.neighbour(CONFIG, "research", "up"))
 
+    def test_a_default_equal_to_the_top_tier_moves_below_it(self) -> None:
+        # The default runs the same setup as ``deep``, so moving down to deep saves nothing.
+        config = profiles.parse({**DOCUMENT, "default_tier": "deep"})
+        self.assertEqual(config.default_tier, "deep")
+        self.assertEqual(recalibrate.neighbour(config, None, "down"), "standard")
+        self.assertIsNone(recalibrate.neighbour(config, None, "up"))
+        self.assertEqual(recalibrate.neighbour(config, "deep", "down"), "standard")
+        lowest = profiles.parse({**DOCUMENT, "default_tier": "light"})
+        self.assertIsNone(recalibrate.neighbour(lowest, None, "down"))
+
+    def test_a_default_tier_off_the_ladder_is_rejected(self) -> None:
+        for bad in ("research", "huge"):
+            with self.subTest(default_tier=bad), self.assertRaises(profiles.ProfileError):
+                profiles.parse({**DOCUMENT, "default_tier": bad})
+
 
 class KeyTests(unittest.TestCase):
     def test_only_whether_the_request_writes_code(self) -> None:
@@ -114,6 +130,16 @@ class KeyTests(unittest.TestCase):
                                                    "needs_external_lookup": None}}), "code=0")
         self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": False, "needs_search": True,
                                                    "needs_external_lookup": False}}), "code=0")
+
+    def test_sages_probability_decides_when_there_is_one(self) -> None:
+        # Unsure as a yes/no (a question *about* code), but the probability answers.
+        unsure = {"needs_code_writing": None, "needs_search": True}
+        self.assertEqual(recalibrate.key({"tags": unsure, "tag_p": {"needs_code_writing": 0.42}}), "code=0")
+        self.assertEqual(recalibrate.key({"tags": unsure, "tag_p": {"needs_code_writing": 0.72}}), "code=1")
+        self.assertEqual(recalibrate.key({"tags": unsure, "tag_p": {"needs_code_writing": 0.5}}), "code=1")
+        # The probability wins over the yes/no.
+        self.assertEqual(recalibrate.key({"tags": {"needs_code_writing": True},
+                                          "tag_p": {"needs_code_writing": 0.2}}), "code=0")
 
     def test_unsure_whether_it_writes_code_no_key(self) -> None:
         self.assertIsNone(recalibrate.key({"tags": {"needs_code_writing": None, "needs_search": True}}))

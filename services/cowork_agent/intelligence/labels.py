@@ -10,8 +10,9 @@ change without rewriting history:
   has at least :data:`MIN_GROUP` sessions, it took more agent turns or cost
   more than :data:`PERCENTILE`% of that setup's sessions.
 - ``over``: the setup was stronger than needed. It ran on the top tier (the
-  default, today's strongest setup, or the highest-effort profile), for one
-  agent turn, on a request Sage said writes no code.
+  default, today's strongest setup, or the highest-effort profile), for at
+  most :data:`SHORT_TURNS` agent turns with none failed, on a request that
+  writes no code (:func:`writes_code`).
 - ``right``: neither. Sessions without any finished turn get no label.
 
 These labels are what recalibration (4b-2) counts per area.
@@ -30,8 +31,24 @@ RIGHT = "right"
 #: Sessions a setup needs before its percentiles mean anything.
 MIN_GROUP = 5
 PERCENTILE = 80
+#: Agent turns at most which a top-tier session counts as short.
+SHORT_TURNS = 2
+#: Sage's probability that a request writes code at or above which it counts as code.
+CODE_P = 0.5
 
 DEFAULT_KEY = "(default)"
+
+
+def writes_code(row: dict[str, Any]) -> bool | None:
+    """Whether a session's request writes code: Sage's probability for it
+    (``tag_p``) against :data:`CODE_P`, else its yes/no answer (``tags``),
+    else ``None``. The probability always answers; the yes/no is often
+    "not sure" for a question *about* code."""
+    p = (row.get("tag_p") or {}).get("needs_code_writing")
+    if isinstance(p, (int, float)) and not isinstance(p, bool):
+        return p >= CODE_P
+    applies = (row.get("tags") or {}).get("needs_code_writing")
+    return applies if isinstance(applies, bool) else None
 
 
 def setup_key(applied: dict[str, Any] | None) -> str:
@@ -70,10 +87,10 @@ def label(row: dict[str, Any], limits: dict[str, dict[str, Any]]) -> tuple[str |
     if not row.get("turn_lines"):
         return None, []
     key = setup_key(row.get("applied"))
-    tags = row.get("tags") or {}
     if row.get("top_tier"):
-        if (row.get("agent_turns") or 0) <= 1 and tags.get("needs_code_writing") is False:
-            return OVER, ["top tier for one agent turn that wrote no code"]
+        turns = row.get("agent_turns") or 0
+        if turns <= SHORT_TURNS and not row.get("failed_turns") and writes_code(row) is False:
+            return OVER, [f"top tier for {turns:g} agent turn(s) on a request that writes no code"]
         return RIGHT, []
     reasons: list[str] = []
     if row.get("failed_turns"):

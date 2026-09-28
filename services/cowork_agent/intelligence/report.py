@@ -125,6 +125,7 @@ def session_rows(since: str | None = None, *, limit: int | None = None) -> list[
                 "reason": ((decision or {}).get("decision") or {}).get("reason"),
                 "decided_profile": ((decision or {}).get("decision") or {}).get("profile"),
                 "tags": {k: v.get("applies") for k, v in (sage.get("tags") or {}).items() if isinstance(v, dict)},
+                "tag_p": {k: v.get("p") for k, v in (sage.get("tags") or {}).items() if isinstance(v, dict)},
                 "areas": (decision or {}).get("areas"),
                 "correction": (decision or {}).get("correction"),
                 "sage_units": sage.get("units"),

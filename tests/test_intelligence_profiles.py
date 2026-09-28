@@ -53,6 +53,8 @@ class ShippedConfigTests(unittest.TestCase):
     def test_the_recalibration_ladder(self) -> None:
         # research is a different kind of work, not a strength: it is never moved.
         self.assertEqual(profiles.load("claude_code").tiers, ("light", "standard", "deep"))
+        # The default runs Opus at high effort, as deep does: a move down from it lands on standard.
+        self.assertEqual(profiles.load("claude_code").default_tier, "deep")
 
     def test_the_default_is_the_current_configuration(self) -> None:
         # No flags at all: Claude Code's own settings decide, exactly as before.

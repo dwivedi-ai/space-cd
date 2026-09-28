@@ -21,6 +21,10 @@
   along it. The default sits above its top, since it passes no flags and runs
   the agent's own (strongest) setup. A profile left out, such as one for a
   different kind of work, is never moved. No ``tiers``: nothing is moved.
+- ``default_tier`` (optional) names the tier the default is equivalent to,
+  when the strongest profile runs the same setup as the default (e.g. both are
+  the agent's top model at high effort). A move down from the default then
+  lands one step below that tier, where it saves something.
 
 The file is re-read when it changes, so editing it changes the choice with no
 code change and no restart. A missing file means the agent does not use
@@ -92,6 +96,8 @@ class IntelligenceConfig:
     sha256: str = ""
     #: profile ids from weakest to strongest; empty when the file lists none.
     tiers: tuple[str, ...] = ()
+    #: the tier the default is equivalent to, if any (``default_tier``).
+    default_tier: str | None = None
 
     def profile(self, profile_id: str) -> Profile | None:
         for profile in self.profiles:
@@ -185,9 +191,13 @@ def parse(document: object, *, sha256: str = "") -> IntelligenceConfig:
     if len(set(tiers)) != len(tiers):
         raise ProfileError("tiers: a profile is listed twice")
 
+    default_tier = document.get("default_tier")
+    if default_tier is not None and default_tier not in tiers:
+        raise ProfileError(f"default_tier: {default_tier!r} is not one of the tiers")
+
     return IntelligenceConfig(
         default=default_setup, efforts=efforts, profiles=tuple(profiles), sha256=sha256,
-        tiers=tuple(tiers),
+        tiers=tuple(tiers), default_tier=default_tier,
     )
 
 
