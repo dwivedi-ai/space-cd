@@ -10,7 +10,9 @@
 
 Anything else is treated as ``off``, with one warning, so a typo can never
 turn network calls on. ``XO_INTELLIGENCE_TIMEOUT_S`` bounds each Sage call
-(default 8 s, clamped to 1–30).
+(default 8 s, clamped to 1–30). ``XO_INTELLIGENCE_WAIT_S`` sets how long a new
+session's first turn waits for the decision in ``on`` (default 2 s, at most the
+Sage timeout).
 
 ``XO_INTELLIGENCE_CONTEXT`` switches what XO hands the agent each turn
 (``context.py``), independently of the routing switch:
@@ -41,6 +43,7 @@ ENV_MODE = "XO_INTELLIGENCE_MODE"
 ENV_TIMEOUT = "XO_INTELLIGENCE_TIMEOUT_S"
 ENV_CONTEXT = "XO_INTELLIGENCE_CONTEXT"
 ENV_RECALIBRATE = "XO_INTELLIGENCE_RECALIBRATE"
+ENV_WAIT = "XO_INTELLIGENCE_WAIT_S"
 
 OFF = "off"
 SHADOW = "shadow"
@@ -73,6 +76,17 @@ def sage_timeout_s() -> float:
     except ValueError:
         value = DEFAULT_TIMEOUT_S
     return min(30.0, max(1.0, value))
+
+
+def first_turn_wait_s(default: float) -> float:
+    """How long a new session's first turn waits for the decision in ``on``:
+    ``XO_INTELLIGENCE_WAIT_S``, else ``default``; at most the Sage timeout."""
+    raw = (os.getenv(ENV_WAIT, "") or "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    return min(sage_timeout_s(), max(0.1, value))
 
 
 def context_mode() -> str:

@@ -133,6 +133,18 @@ class FirstTurnTests(_Sandbox):
                                             "model": "claude-opus-5-5", "effort": "high"})
         self.assertEqual(line["applied"], kwargs)
 
+    def test_a_longer_wait_lets_a_slower_pick_apply(self) -> None:
+        with patch.dict(os.environ, {mode.ENV_WAIT: "1"}):
+            kwargs, line = self.first_turn(answer("deep"), delay=0.5)
+        self.assertEqual(kwargs["source"], "sage")
+        self.assertEqual(line["decision"]["reason"], "sage_choice")
+
+    def test_the_wait_never_exceeds_the_sage_timeout(self) -> None:
+        with patch.dict(os.environ, {mode.ENV_WAIT: "60", mode.ENV_TIMEOUT: "8"}):
+            self.assertEqual(mode.first_turn_wait_s(2.0), 8.0)
+        with patch.dict(os.environ, {mode.ENV_WAIT: "soon"}):
+            self.assertEqual(mode.first_turn_wait_s(2.0), 2.0)
+
     def test_a_quick_choice_is_applied_while_slow_tags_finish(self) -> None:
         # Live 16:09: the choice came in 0.64 s, the tags in 3.7 s. The pick counts.
         kwargs, line = self.first_turn(answer("deep"), tags_delay=0.5)

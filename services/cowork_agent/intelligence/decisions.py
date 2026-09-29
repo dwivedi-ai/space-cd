@@ -5,7 +5,8 @@ returns at once: the decision runs as a task beside the agent.
 
 - ``shadow``: nothing waits for the decision. The session runs with what the
   request itself chose, if anything, and the decision is only logged.
-- ``on``: the stream waits for the decision for at most :data:`ON_WAIT_S`.
+- ``on``: the stream waits for the decision for at most :data:`ON_WAIT_S`
+  (``XO_INTELLIGENCE_WAIT_S`` sets another wait, up to the Sage timeout).
   An answer in time is applied; a late one, ``unknown``, a ``null`` or a
   failure gets the default setup. The late answer is still logged
   (``sage_late``).
@@ -128,7 +129,8 @@ async def _decide(
     areas: asyncio.Future | None = None,
 ) -> classify.Decision | None:
     started = time.perf_counter()
-    deadline = time.monotonic() + ON_WAIT_S
+    wait = mode.first_turn_wait_s(ON_WAIT_S)
+    deadline = time.monotonic() + wait
     try:
         content = classify.prepare_content(text)
         # The request's areas (6c), asked at the same moment, in indexed projects only.
@@ -150,7 +152,7 @@ async def _decide(
         if current_mode == mode.ON:
             # Wait for the choice only: the tags call is for the log and may be slower.
             try:
-                picked = await asyncio.wait_for(asyncio.shield(choice_ready), timeout=ON_WAIT_S)
+                picked = await asyncio.wait_for(asyncio.shield(choice_ready), timeout=wait)
             except asyncio.TimeoutError:
                 picked, on_time = None, False
             if applying and on_time:
@@ -315,7 +317,7 @@ async def _first_turn_setup(pending: PendingDecision | None) -> selection.Select
         return None
     try:
         # The task resolves this by its own deadline; the margin only guards a stuck task.
-        return await asyncio.wait_for(asyncio.shield(pending.setup), timeout=ON_WAIT_S + 1.0)
+        return await asyncio.wait_for(asyncio.shield(pending.setup), timeout=mode.first_turn_wait_s(ON_WAIT_S) + 1.0)
     except Exception:  # noqa: BLE001 - no setup in time means the default
         return None
 
