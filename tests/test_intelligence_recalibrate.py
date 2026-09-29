@@ -345,6 +345,39 @@ class DecisionLineTests(_Sandbox):
         self.assertEqual(line["recalibrate"]["evidence"], 2)
 
 
+class AreaFallbackTests(_Sandbox):
+    """An area with too little evidence of its own falls back to whether the request writes code."""
+
+    UI = {"ui": [0.9, True]}
+
+    def evaluate(self, areas=UI) -> dict:
+        return recalibrate.evaluate(CONFIG, project=None, session_id="new-session", profile="light",
+                                    sage={"tags": CODE_TAGS}, areas=areas)
+
+    def test_a_thin_area_falls_back_to_the_code_key(self) -> None:
+        self.under_light(5)  # code sessions without areas
+        self.assertEqual(self.evaluate()["correction"],
+                         {"mode": "shadow", "from": "light", "to": "standard", "key": CODE_KEY, "evidence": 5,
+                          "rate": 1.0, "direction": "up", "fallback_from": "area=ui", "applied": False})
+
+    def test_the_code_key_counts_sessions_of_every_area(self) -> None:
+        self.write(*(past_session(f"s{i:02d}", "light", failed=True, areas={"adapters": [0.9, True]})
+                     for i in range(5)))
+        self.assertEqual(self.evaluate()["correction"]["evidence"], 5)
+
+    def test_an_area_with_enough_evidence_is_used_as_is(self) -> None:
+        self.write(*(past_session(f"a{i:02d}", "light", areas=self.UI) for i in range(5)))
+        self.under_light(5)
+        result = self.evaluate()
+        self.assertEqual(result["recalibrate"], {"mode": "shadow", "key": "area=ui", "evidence": 5, "result": "none"})
+
+    def test_nothing_anywhere_says_so_with_the_area(self) -> None:
+        self.under_light(2)
+        self.assertEqual(self.evaluate()["recalibrate"],
+                         {"mode": "shadow", "key": CODE_KEY, "evidence": 2, "result": "insufficient",
+                          "fallback_from": "area=ui"})
+
+
 class ReportTests(_Sandbox):
     def test_the_report_shows_would_be_corrections(self) -> None:
         self.under_light(5)

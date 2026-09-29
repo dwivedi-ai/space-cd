@@ -11,6 +11,9 @@ kind should route differently. Here, when a new session is decided:
    Sage is often unsure whether a question *about* code writes code, and an
    unsure answer left the session out of every group. Lines without a
    probability fall back to the answer; no key when neither is there.
+   When an area has too little evidence of its own, the request is matched
+   by whether it writes code instead (``fallback_from`` names the area): a
+   project has many areas, and most would never gather enough sessions.
 2. The **evidence** is the earlier finished sessions in the same log (the
    project's, or the no-project log) with the same key that ran on the same
    setup as the one decided now: the picked profile, or the default. Each is
@@ -51,6 +54,14 @@ MIN_RATE = 0.6
 
 UP = "up"
 DOWN = "down"
+AREA = "area="
+
+
+def code_key(row: dict[str, Any]) -> str | None:
+    """``code=1`` / ``code=0`` for whether the request writes code, or ``None``."""
+    code = labels.writes_code(row)
+    return None if code is None else f"code={int(code)}"
+
 
 def key(row: dict[str, Any]) -> str | None:
     """What kind of request a session was, for matching it to past ones.
@@ -67,12 +78,13 @@ def key(row: dict[str, Any]) -> str | None:
             and isinstance(value[0], (int, float))
         ]
         if confident:
-            return f"area={max(confident)[1]}"
-    code = labels.writes_code(row)
-    return None if code is None else f"code={int(code)}"
+            return f"{AREA}{max(confident)[1]}"
+    return code_key(row)
 
 
-_key_of = key  # ``rule`` takes a ``key`` argument, which hides the function
+def _matches(row: dict[str, Any], wanted: str) -> bool:
+    """Whether a past row has ``wanted``: an area key, or a code key by the row's code fact alone."""
+    return (key(row) if wanted.startswith(AREA) else code_key(row)) == wanted
 
 
 def neighbour(config: profiles.IntelligenceConfig, profile: str | None, direction: str) -> str | None:
@@ -108,7 +120,7 @@ def rule(
     setup = profile or labels.DEFAULT_KEY
     matching = [
         r for r in rows
-        if r.get("label") and labels.setup_key(r.get("applied")) == setup and _key_of(r) == key
+        if r.get("label") and labels.setup_key(r.get("applied")) == setup and _matches(r, key)
     ]
     evidence = {"key": key, "evidence": len(matching)}
     if not config.tiers or (profile is not None and profile not in config.tiers):
@@ -142,8 +154,9 @@ def evaluate(
         if request is not None and not request.empty:
             return {"recalibrate": {"mode": current, "result": "request"}}
         facts = {k: v for k, v in ((sage or {}).get("tags") or {}).items() if isinstance(v, dict)}
-        request_key = key({"tags": {k: v.get("applies") for k, v in facts.items()},
-                           "tag_p": {k: v.get("p") for k, v in facts.items()}, "areas": areas})
+        request = {"tags": {k: v.get("applies") for k, v in facts.items()},
+                   "tag_p": {k: v.get("p") for k, v in facts.items()}, "areas": areas}
+        request_key = key(request)
         past = []
         if request_key is not None:
             past = [
@@ -151,6 +164,9 @@ def evaluate(
                 if r.get("project") == (project or None) and r.get("session_id") != session_id
             ]
         result = rule(config, profile=profile, key=request_key, rows=past)
+        wider = code_key(request)
+        if result.get("result") == "insufficient" and request_key.startswith(AREA) and wider:
+            result = {**rule(config, profile=profile, key=wider, rows=past), "fallback_from": request_key}
     except Exception:  # noqa: BLE001 - a missing correction must never cost a decision
         log.exception("intelligence: recalibrating session %s failed", session_id)
         return {"recalibrate": {"mode": current, "result": "error"}}
