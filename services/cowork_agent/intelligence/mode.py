@@ -25,7 +25,9 @@ turn network calls on. ``XO_INTELLIGENCE_TIMEOUT_S`` bounds each Sage call
 - ``off`` (the default): nothing is looked up.
 - ``shadow``: the one-tier correction the past record would make is logged on
   the decision line; the setup is not changed.
-- ``on``: for now the same as ``shadow``. Applying the correction is step 4b-3.
+- ``on`` (with ``XO_INTELLIGENCE_MODE=on``): the correction is applied (step 4b-3): the
+  new session starts one tier up or down, and the decision line says ``applied: true``.
+  With routing in ``shadow`` it only logs, as ``shadow`` does.
 """
 
 from __future__ import annotations

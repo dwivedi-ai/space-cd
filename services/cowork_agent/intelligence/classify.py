@@ -176,13 +176,15 @@ async def classify(
     *,
     timeout: float,
     choice_ready: asyncio.Future | None = None,
+    tags_ready: asyncio.Future | None = None,
 ) -> Decision:
     """Ask both questions at once. Never raises.
 
     ``choice_ready``, when given, is resolved with the picked profile (or
     ``None``) as soon as the choice answer arrives: only the choice decides the
-    setup, so a caller on a deadline need not wait for the tags, which are
-    for the log.
+    setup, so a caller on a deadline need not wait for the tags. ``tags_ready``
+    is resolved the same way with the tags record (or ``None``), for a caller
+    that corrects the pick from the past record before the first turn (4b-3).
     """
     async def ask_choice() -> client.SageResult:
         result = await client.decide(content, choice_question(config), timeout=timeout)
@@ -190,10 +192,13 @@ async def classify(
             choice_ready.set_result(_picked(config, result))
         return result
 
-    choice_result, tags_result = await asyncio.gather(
-        ask_choice(),
-        client.decide(content, tags_question(), timeout=timeout),
-    )
+    async def ask_tags() -> client.SageResult:
+        result = await client.decide(content, tags_question(), timeout=timeout)
+        if tags_ready is not None and not tags_ready.done():
+            tags_ready.set_result(_read_tags(result)[0])
+        return result
+
+    choice_result, tags_result = await asyncio.gather(ask_choice(), ask_tags())
     option_ids = set(config.profile_ids) | {profiles.UNKNOWN}
     choice, choice_error = _read_choice(choice_result, option_ids)
     tags, tags_error = _read_tags(tags_result)

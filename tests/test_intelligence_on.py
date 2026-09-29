@@ -65,7 +65,7 @@ class _Sandbox(unittest.TestCase):
 
     def sage(self, decision: classify.Decision, delay: float = 0.0, tags_delay: float = 0.0):
         """Sage answers the choice after ``delay`` and the tags ``tags_delay`` later."""
-        async def fake(config, content, *, timeout, choice_ready=None):
+        async def fake(config, content, *, timeout, choice_ready=None, tags_ready=None):
             await asyncio.sleep(delay)
             if choice_ready is not None and not choice_ready.done():
                 choice_ready.set_result(decision.profile)
@@ -152,7 +152,7 @@ class FirstTurnTests(_Sandbox):
         self.assertEqual(kwargs, {"profile": "deep", "model": "claude-opus-5-5", "effort": "low", "source": "sage"})
 
     def test_a_failed_decision_still_answers_the_turn(self) -> None:
-        async def broken(config, content, *, timeout, choice_ready=None):
+        async def broken(config, content, *, timeout, choice_ready=None, tags_ready=None):
             raise RuntimeError("boom")
 
         async def go():

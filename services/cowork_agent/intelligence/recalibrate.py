@@ -22,10 +22,14 @@ kind should route differently. Here, when a new session is decided:
    The default sits above the ladder's top, or at ``default_tier`` when the
    config names one; a profile off the ladder is never moved. The strongest setup is never labelled under, so it never goes up.
 
-Switched by ``XO_INTELLIGENCE_RECALIBRATE`` (``mode.py``). Step 4b-2 only
+Switched by ``XO_INTELLIGENCE_RECALIBRATE`` (``mode.py``). In ``shadow`` it only
 logs: the decision line gets a ``correction`` (``applied: false``) when the
-record would move the setup, else a small ``recalibrate`` saying why not. An
-explicit profile, model or effort in the request is never recalibrated.
+record would move the setup, else a small ``recalibrate`` saying why not. In
+``on`` (4b-3) the correction is applied before the first turn
+(``decisions._correct``): the session starts on the corrected tier and the
+line says ``applied: true``; without the tags in time, nothing moves
+(``late``). An explicit profile, model or effort in the request is never
+recalibrated.
 Nothing here ever raises into a chat.
 """
 

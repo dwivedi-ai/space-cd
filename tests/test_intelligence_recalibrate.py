@@ -231,13 +231,18 @@ class _Sandbox(unittest.TestCase):
     def lines(self) -> list[dict]:
         return [json.loads(raw) for raw in self.log.read_text().splitlines()]
 
-    def decide(self, chosen: str | None = "light", tags=CODE_TAGS, request=None, current_mode="on") -> dict:
+    def decide(self, chosen: str | None = "light", tags=CODE_TAGS, request=None, current_mode="on",
+               tags_in_time=True) -> dict:
         picked = classify.Decision(profile=chosen, reason=classify.SAGE_CHOICE if chosen else classify.SAGE_UNKNOWN,
                                    sage={"choice": {"chosen": chosen or "unknown"}, "tags": tags,
                                          "units": 2, "errors": []})
-        async def fake_classify(_config, _content, *, timeout, choice_ready=None):
+        async def fake_classify(_config, _content, *, timeout, choice_ready=None, tags_ready=None):
             if choice_ready is not None and not choice_ready.done():
                 choice_ready.set_result(chosen)
+            if tags_ready is not None and not tags_ready.done():
+                if not tags_in_time:
+                    await asyncio.sleep(decisions.ON_WAIT_S + 0.2)
+                tags_ready.set_result(tags)
             return picked
 
         with patch.object(decisions.classify, "classify", fake_classify):
@@ -259,12 +264,36 @@ class DecisionLineTests(_Sandbox):
         self.assertEqual(line["applied"]["profile"], "light")
         self.assertEqual(decisions.remembered("new-session")["profile"], "light")
 
-    def test_on_only_logs_too_until_4b3(self) -> None:
+    def test_on_applies_the_correction_before_the_first_turn(self) -> None:
         self.under_light(5)
         with patch.dict(os.environ, {mode.ENV_RECALIBRATE: "on"}):
             line = self.decide("light")
-        self.assertEqual((line["correction"]["mode"], line["correction"]["applied"]), ("on", False))
+        self.assertEqual(line["correction"], {"mode": "on", "from": "light", "to": "standard", "key": CODE_KEY,
+                                              "evidence": 5, "rate": 1.0, "direction": "up", "applied": True})
+        self.assertEqual(line["decision"]["profile"], "light")  # Sage's own pick stays on record
+        self.assertEqual(line["applied"]["profile"], "standard")
+        self.assertEqual(decisions.remembered("new-session")["profile"], "standard")
+
+    def test_on_without_the_tags_in_time_moves_nothing(self) -> None:
+        self.under_light(5)
+        with patch.dict(os.environ, {mode.ENV_RECALIBRATE: "on"}), patch.object(decisions, "ON_WAIT_S", 0.2):
+            line = self.decide("light", tags_in_time=False)
+        self.assertEqual(line["recalibrate"], {"mode": "on", "result": "late"})
         self.assertEqual(line["applied"]["profile"], "light")
+
+    def test_on_never_corrects_an_explicit_request(self) -> None:
+        self.under_light(5)
+        with patch.dict(os.environ, {mode.ENV_RECALIBRATE: "on"}):
+            line = self.decide("light", request=selection.RequestChoice(profile="light"))
+        self.assertNotIn("correction", line)
+        self.assertEqual(line["applied"]["profile"], "light")
+
+    def test_on_with_routing_in_shadow_only_logs(self) -> None:
+        self.under_light(5)
+        with patch.dict(os.environ, {mode.ENV_RECALIBRATE: "on"}):
+            line = self.decide("light", current_mode="shadow")
+        self.assertEqual((line["correction"]["to"], line["correction"]["applied"]), ("standard", False))
+        self.assertIsNone(line["applied"]["profile"])
 
     def test_shadow_routing_corrects_the_profile_sage_picked(self) -> None:
         # Shadow routing runs every session on the default; the correction is about Sage's pick.

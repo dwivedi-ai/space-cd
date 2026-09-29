@@ -128,23 +128,34 @@ async def _decide(
     areas: asyncio.Future | None = None,
 ) -> classify.Decision | None:
     started = time.perf_counter()
+    deadline = time.monotonic() + ON_WAIT_S
     try:
         content = classify.prepare_content(text)
         # The request's areas (6c), asked at the same moment, in indexed projects only.
         asking_areas = (asyncio.ensure_future(_request_areas(project, content, areas))
                         if areas is not None else None)
-        choice_ready = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+        choice_ready = loop.create_future()
+        # 4b-3: in ``on`` with recalibration ``on``, the past record may move the
+        # pick one tier before the first turn starts, so the tags are needed early.
+        applying = (current_mode == mode.ON and mode.recalibrate_mode() == mode.ON
+                    and (request is None or request.empty))
+        tags_ready = loop.create_future() if applying else None
         deciding = asyncio.ensure_future(classify.classify(
-            config, content, timeout=mode.sage_timeout_s(), choice_ready=choice_ready))
-        # If deciding fails before the choice answer, stop waiting at once.
-        deciding.add_done_callback(lambda _task: _resolve(choice_ready, None))
+            config, content, timeout=mode.sage_timeout_s(), choice_ready=choice_ready, tags_ready=tags_ready))
+        # If deciding fails before an answer, stop waiting at once.
+        deciding.add_done_callback(lambda _task: (_resolve(choice_ready, None), _resolve(tags_ready, None)))
         on_time = True
+        recalibration: dict[str, Any] | None = None
         if current_mode == mode.ON:
             # Wait for the choice only: the tags call is for the log and may be slower.
             try:
                 picked = await asyncio.wait_for(asyncio.shield(choice_ready), timeout=ON_WAIT_S)
             except asyncio.TimeoutError:
                 picked, on_time = None, False
+            if applying and on_time:
+                picked, recalibration = await _correct(config, project, session_id, picked,
+                                                       tags_ready, areas, deadline)
             applied = selection.select(config, request, decided=picked, use_default=True)
         else:
             applied = selection.select(config, request)
@@ -154,12 +165,13 @@ async def _decide(
         decision = await deciding
         found_areas = await asking_areas if asking_areas is not None else None
         setup_decided = decided_setup(config, decision)
-        # After the setup is resolved, so the past record never delays a reply.
-        recalibration = await asyncio.to_thread(
-            recalibrate.evaluate, config, project=project, session_id=session_id,
-            profile=decision.profile, sage=decision.sage, request=request,
-            areas=(found_areas or {}).get("areas"),
-        )
+        if recalibration is None:
+            # After the setup is resolved, so the past record never delays a reply.
+            recalibration = await asyncio.to_thread(
+                recalibrate.evaluate, config, project=project, session_id=session_id,
+                profile=decision.profile, sage=decision.sage, request=request,
+                areas=(found_areas or {}).get("areas"),
+            )
         await asyncio.to_thread(
             decision_log.record,
             project,
@@ -187,6 +199,35 @@ async def _decide(
     finally:
         _resolve(setup, None)
         _resolve(areas, None)
+
+
+async def _correct(
+    config: profiles.IntelligenceConfig,
+    project: str | None,
+    session_id: str | None,
+    picked: str | None,
+    tags_ready: asyncio.Future | None,
+    areas: asyncio.Future | None,
+    deadline: float,
+) -> tuple[str | None, dict[str, Any]]:
+    """Apply the past record's correction to Sage's pick before the first turn
+    (4b-3). Returns the profile to run (``None``: the default) and the fields
+    for the decision line. The tags are waited for until ``deadline`` at most;
+    without them, nothing moves (``late``). The request's areas are used only if
+    they are already there."""
+    try:
+        tags = await asyncio.wait_for(asyncio.shield(tags_ready), timeout=max(0.0, deadline - time.monotonic()))
+    except asyncio.TimeoutError:
+        return picked, {"recalibrate": {"mode": mode.ON, "result": "late"}}
+    found = areas.result() if areas is not None and areas.done() else None
+    result = await asyncio.to_thread(
+        recalibrate.evaluate, config, project=project, session_id=session_id,
+        profile=picked, sage={"tags": tags or {}}, areas=(found or {}).get("areas"),
+    )
+    correction = result.get("correction")
+    if correction and correction.get("to"):
+        return correction["to"], {"correction": {**correction, "applied": True}}
+    return picked, result
 
 
 async def _request_areas(project: str | None, content: str, future: asyncio.Future | None) -> dict[str, Any] | None:
