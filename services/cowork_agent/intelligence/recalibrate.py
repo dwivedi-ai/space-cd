@@ -1,0 +1,175 @@
+"""Recalibrate a new session's decision from the past record (plan step 4b).
+
+When routing keeps getting one kind of request wrong, the next request of that
+kind should route differently. Here, when a new session is decided:
+
+1. Its **key** says what kind of request it is: its primary area (the
+   confident area with the highest probability, once requests are tagged with
+   the project's areas), else whether the request writes code: ``code=1`` when
+   Sage's probability for it is at least ``labels.CODE_P``, else ``code=0``. Only
+   that fact, and its probability rather than Sage's yes/no/unsure answer:
+   Sage is often unsure whether a question *about* code writes code, and an
+   unsure answer left the session out of every group. Lines without a
+   probability fall back to the answer; no key when neither is there.
+   When an area has too little evidence of its own, the request is matched
+   by whether it writes code instead (``fallback_from`` names the area): a
+   project has many areas, and most would never gather enough sessions.
+2. The **evidence** is the earlier finished sessions in the same log (the
+   project's, or the no-project log) with the same key that ran on the same
+   setup as the one decided now: the picked profile, or the default. Each is
+   labelled by ``labels.py``, exactly as the report labels it, from the last
+   :data:`READ_LIMIT` lines of every log.
+3. The **rule**: with at least :data:`MIN_EVIDENCE` such sessions, where at
+   least :data:`MIN_RATE` of them were under-powered, move one tier up the
+   agent's ``tiers`` ladder; where as many were over-powered, one tier down.
+   The default sits above the ladder's top, or at ``default_tier`` when the
+   config names one; a profile off the ladder is never moved. The strongest setup is never labelled under, so it never goes up.
+
+Switched by ``XO_INTELLIGENCE_RECALIBRATE`` (``mode.py``). In ``shadow`` it only
+logs: the decision line gets a ``correction`` (``applied: false``) when the
+record would move the setup, else a small ``recalibrate`` saying why not. In
+``on`` (4b-3) the correction is applied before the first turn
+(``decisions._correct``): the session starts on the corrected tier and the
+line says ``applied: true``; without the tags in time, nothing moves
+(``late``). An explicit profile, model or effort in the request is never
+recalibrated.
+Nothing here ever raises into a chat.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from services.cowork_agent.intelligence import labels, mode, profiles, report, selection
+
+log = logging.getLogger(__name__)
+
+#: Lines read from the end of each decision log.
+READ_LIMIT = 2000
+#: Past sessions of the same key and setup needed before anything moves.
+MIN_EVIDENCE = 5
+#: Share of them labelled one way needed to move one tier that way.
+MIN_RATE = 0.6
+
+UP = "up"
+DOWN = "down"
+AREA = "area="
+
+
+def code_key(row: dict[str, Any]) -> str | None:
+    """``code=1`` / ``code=0`` for whether the request writes code, or ``None``."""
+    code = labels.writes_code(row)
+    return None if code is None else f"code={int(code)}"
+
+
+def key(row: dict[str, Any]) -> str | None:
+    """What kind of request a session was, for matching it to past ones.
+
+    ``row`` is shaped like a report row: ``tag_p`` maps each fact to Sage's
+    probability and ``tags`` to its ``applies``; ``areas`` (optional) maps an
+    area to ``[p, applies]``.
+    """
+    areas = row.get("areas")
+    if isinstance(areas, dict):
+        confident = [
+            (value[0], area) for area, value in areas.items()
+            if isinstance(value, (list, tuple)) and len(value) >= 2 and value[1] is True
+            and isinstance(value[0], (int, float))
+        ]
+        if confident:
+            return f"{AREA}{max(confident)[1]}"
+    return code_key(row)
+
+
+def _matches(row: dict[str, Any], wanted: str) -> bool:
+    """Whether a past row has ``wanted``: an area key, or a code key by the row's code fact alone."""
+    return (key(row) if wanted.startswith(AREA) else code_key(row)) == wanted
+
+
+def neighbour(config: profiles.IntelligenceConfig, profile: str | None, direction: str) -> str | None:
+    """The profile one tier ``up`` or ``down`` from ``profile`` (``None``: the
+    default), or ``None`` when there is nowhere to go."""
+    tiers = config.tiers
+    if not tiers:
+        return None
+    if profile is None:
+        if direction == UP:
+            return None
+        if config.default_tier in tiers:
+            index = tiers.index(config.default_tier) - 1
+            return tiers[index] if index >= 0 else None
+        return tiers[-1]
+    if profile not in tiers:
+        return None
+    index = tiers.index(profile) + (1 if direction == UP else -1)
+    return tiers[index] if 0 <= index < len(tiers) else None
+
+
+def rule(
+    config: profiles.IntelligenceConfig,
+    *,
+    profile: str | None,
+    key: str | None,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """What the record says about running ``profile`` (``None``: the default)
+    for a request with ``key``. A move has ``to``; otherwise ``result`` says why not."""
+    if key is None:
+        return {"result": "no_key"}
+    setup = profile or labels.DEFAULT_KEY
+    matching = [
+        r for r in rows
+        if r.get("label") and labels.setup_key(r.get("applied")) == setup and _matches(r, key)
+    ]
+    evidence = {"key": key, "evidence": len(matching)}
+    if not config.tiers or (profile is not None and profile not in config.tiers):
+        return {**evidence, "result": "untiered"}
+    if len(matching) < MIN_EVIDENCE:
+        return {**evidence, "result": "insufficient"}
+    for direction, verdict in ((UP, labels.UNDER), (DOWN, labels.OVER)):
+        rate = sum(1 for r in matching if r["label"] == verdict) / len(matching)
+        target = neighbour(config, profile, direction)
+        if rate >= MIN_RATE and target:
+            return {"from": setup, "to": target, **evidence, "rate": round(rate, 2), "direction": direction}
+    return {**evidence, "result": "none"}
+
+
+def evaluate(
+    config: profiles.IntelligenceConfig,
+    *,
+    project: str | None,
+    session_id: str | None,
+    profile: str | None,
+    sage: dict[str, Any],
+    request: selection.RequestChoice | None = None,
+    areas: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The fields recalibration adds to a decision line: ``{}`` when it is
+    off, else ``correction`` or ``recalibrate``. Blocking I/O; never raises."""
+    current = mode.recalibrate_mode()
+    if current == mode.OFF:
+        return {}
+    try:
+        if request is not None and not request.empty:
+            return {"recalibrate": {"mode": current, "result": "request"}}
+        facts = {k: v for k, v in ((sage or {}).get("tags") or {}).items() if isinstance(v, dict)}
+        request = {"tags": {k: v.get("applies") for k, v in facts.items()},
+                   "tag_p": {k: v.get("p") for k, v in facts.items()}, "areas": areas}
+        request_key = key(request)
+        past = []
+        if request_key is not None:
+            past = [
+                r for r in report.session_rows(limit=READ_LIMIT)
+                if r.get("project") == (project or None) and r.get("session_id") != session_id
+            ]
+        result = rule(config, profile=profile, key=request_key, rows=past)
+        wider = code_key(request)
+        if result.get("result") == "insufficient" and request_key.startswith(AREA) and wider:
+            result = {**rule(config, profile=profile, key=wider, rows=past), "fallback_from": request_key}
+    except Exception:  # noqa: BLE001 - a missing correction must never cost a decision
+        log.exception("intelligence: recalibrating session %s failed", session_id)
+        return {"recalibrate": {"mode": current, "result": "error"}}
+    if "to" in result:
+        return {"correction": {"mode": current, **result, "applied": False}}
+    return {"recalibrate": {"mode": current, **result}}

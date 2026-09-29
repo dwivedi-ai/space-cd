@@ -17,6 +17,7 @@
   .sess-hero-secondary span{min-width:0;line-height:1.35}
   .sess-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:16px}
   .sess-grid2-wide{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+  .sess-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
   /* chart rows inside a Trends card, above that card's table */
   .sess-in-card{margin-bottom:20px}
   .sess-tools-charts{grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:center}
@@ -35,6 +36,12 @@
   .sess-prompt-text{flex-basis:100%;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.55;color:var(--ink-2)}
   .sess-prompt-trunc{color:var(--muted-foreground);font-style:italic}
   .sess-note{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--muted-foreground);font-size:12.5px;padding:26px 0;text-align:center}
+  /* Routing check: the layer a session ran on, then yes / no. */
+  .sess-routing{display:flex;flex-direction:column;gap:10px;font-size:13px;color:var(--ink-2)}
+  .sess-routing-ran{margin:0;line-height:1.55;word-break:break-word}
+  .sess-routing-ask{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+  .sess-routing-ask>span{margin-right:4px}
+  .sess-routing-done{margin:0;font-size:12px;color:var(--muted-foreground)}
   .sess-skeleton [data-slot="card"]{margin-bottom:16px}
   /* Shared button class other views (Tree, Sharing) still use; kept here
      until they move to the shadcn Button. */

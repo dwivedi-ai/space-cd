@@ -39,6 +39,11 @@ class SpaceSessionsUiTests(unittest.TestCase):
         self.assertIn("cost is unavailable", view)
         self.assertIn(".sess-pager", css)
         self.assertIn(".sess-prompt", css)
+        # The routing check: any session can be answered yes / no.
+        self.assertIn("Routing check", view)
+        self.assertIn("/api/intelligence/sessions/", view)
+        self.assertIn("data-routing-answer", view)
+        self.assertIn(".sess-routing", css)
         self.assertIn("sessions.js?v=", app)
         self.assertRegex(index, r"sessions\.css\?v=\d{8}-[a-z0-9]+")
 

@@ -27,6 +27,7 @@ from services.cowork_agent import project_layout, runtime_config, xo_cowork_stat
 from routers.cowork_agent.bff._visualizer_models import TimelineEvent
 from services.cowork_agent.connectors import token_store
 from services.cowork_agent.engine import sessions_io
+from services.cowork_agent.intelligence import categories, decision_log
 from services.cowork_agent.registry import agent_env
 from services.cowork_agent.visualizer import workitem_claims
 from services.cowork_agent.visualizer.ingest.jsonl_tail import OffsetStore
@@ -89,6 +90,9 @@ class StorePathTests(_Sandbox):
         paths = {
             "project history": project_layout.runtime_dir(PID),
             "sessions with no project": sessions_io._root_shard_dir(),
+            "a project's intelligence decisions": decision_log.log_path("demo")[0],
+            "intelligence decisions with no project": decision_log.log_path(None)[0],
+            "a project's category list": categories.path_for("demo"),
             "the Space timeline": project_layout.workspace_timeline_path(),
             "watcher reading positions": watcher_state.watcher_state_dir(),
             "the Inbox": inbox_store.inbox_path(),
